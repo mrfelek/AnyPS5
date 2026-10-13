@@ -163,7 +163,7 @@ public:
         const bool oneLayer = resource.dimension == TextureDimension::k2DArray && resource.baseArray == 0 && resource.depthOrLastArray == 0;
         if (resource.dimension != TextureDimension::k2D && !oneLayer) {
             char text[256];
-            std::snprintf(text, sizeof(text), "AGC graphics: storage image access to depth/stencil surface 0x%llx is not implemented (storage=%ux%u guest format=%u mip=%u dimension=%d tile=%d)", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, mip, static_cast<int>(resource.dimension), static_cast<int>(resource.tileMode));
+            std::snprintf(text, sizeof(text), "AGC graphics: storage image access to depth/stencil surface 0x%llx is not implemented (storage=%ux%u guest format=%u mip=%u dimension=%d tile=%d slices=%u-%u levels=%u-%u)", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, mip, static_cast<int>(resource.dimension), static_cast<int>(resource.tileMode), resource.baseArray, resource.depthOrLastArray, resource.baseLevel, resource.lastLevel);
             throw std::runtime_error(text);
         }
         Require(target.samples == 1, "storage image access to a multisampled depth surface is not implemented");
@@ -666,7 +666,17 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     }
 }
 
-bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource) {
+GuestTextureResource SingleSliceView(const GuestTextureResource& resource) {
+    if (resource.dimension != TextureDimension::k2DArray || resource.baseArray == 0 || resource.baseArray != resource.depthOrLastArray) return resource;
+    auto slice = resource;
+    slice.baseAddress += static_cast<std::uint64_t>(resource.baseArray) * DepthSliceBytes({resource.width, resource.height}, BytesPerElement(resource.format));
+    slice.baseArray = 0;
+    slice.depthOrLastArray = 0;
+    return slice;
+}
+
+bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& viewed) {
+    const auto resource = SingleSliceView(viewed);
     std::lock_guard lock(surfacesMutex());
     const auto& list = surfaces();
     const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
@@ -682,7 +692,8 @@ bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words
     return ResolveTextureFormat(resource.format) == expected || depthBits;
 }
 
-std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip) {
+std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& viewed, std::uint32_t mip) {
+    const auto resource = SingleSliceView(viewed);
     std::lock_guard lock(surfacesMutex());
     const auto& list = surfaces();
     const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
