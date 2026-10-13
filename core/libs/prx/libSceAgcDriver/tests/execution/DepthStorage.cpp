@@ -247,6 +247,8 @@ void Run(Context context, std::uint8_t* block) {
     layeredDepth.depthOrLastArray = 0;
     layeredDepth.baseArray = 1;
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "storage image access to depth/stencil surface", "a 2D array view of layer 1 of the depth plane was accepted");
+    layeredDepth.depthOrLastArray = 1;
+    Require(DepthSurfaceStorage(context, {}, layeredDepth, 0) == nullptr, "a one-layer 2D array view of layer 1 was taken for the depth surface of layer 0");
 }
 
 }
