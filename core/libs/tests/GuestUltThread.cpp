@@ -30,6 +30,11 @@ int APS5_VABI _sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32
 int APS5_VABI _sceUltQueueCreate(void*, const char*, std::uint64_t, void*, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltQueuePush(void*, const void*);
 int APS5_VABI sceUltQueuePop(void*, void*);
+int APS5_VABI sceUltMutexDestroy(void*);
+int APS5_VABI sceUltWaitingQueueResourcePoolDestroy(void*);
+int APS5_VABI sceUltSemaphoreDestroy(void*);
+int APS5_VABI sceUltQueueDestroy(void*);
+int APS5_VABI sceUltQueueDataResourcePoolDestroy(void*);
 }
 
 static constexpr int Ok = 0;
@@ -177,6 +182,19 @@ static void UnderscoredCreate() {
     std::uint64_t value = 0x1122334455667788ull, output = 0;
     CHECK(sceUltQueuePush(queue, &value) == Ok);
     CHECK(sceUltQueuePop(queue, &output) == Ok && output == value);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(nullptr) == Null);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(unknownPool) == State);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(pool) == Busy);
+    CHECK(sceUltMutexDestroy(nullptr) == Null);
+    CHECK(sceUltMutexDestroy(mutex) == Ok);
+    CHECK(sceUltMutexDestroy(mutex) == State);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(pool) == Busy);
+    CHECK(sceUltSemaphoreDestroy(semaphore) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(pool) == Busy);
+    CHECK(sceUltQueueDestroy(queue) == Ok);
+    CHECK(sceUltQueueDataResourcePoolDestroy(dataPool) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(pool) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(pool) == State);
 }
 
 int main(int argc, char** argv) {

@@ -21,6 +21,7 @@ constexpr int ULT_ERROR_AGAIN = -2139029496;
 struct UltMutexState {
     std::recursive_mutex _mutex;
     std::uint32_t _attribute = 0;
+    void* _waitingPool = nullptr;
 };
 
 struct UltSemaphoreState {
@@ -29,6 +30,7 @@ struct UltSemaphoreState {
     std::int32_t _resources = 0;
     std::uint32_t _waiters = 0;
     bool _alive = true;
+    void* _waitingPool = nullptr;
 };
 
 struct UltResourcePoolState {
