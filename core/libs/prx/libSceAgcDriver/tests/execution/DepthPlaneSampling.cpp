@@ -51,6 +51,7 @@ constexpr std::size_t IntegerOffset = 0xa0000;
 constexpr std::size_t DepthBitsOffset = 0xb0000;
 constexpr std::size_t OneSliceOffset = 0xd0000;
 constexpr std::size_t FirstSliceOffset = 0xe0000;
+constexpr std::size_t BaseSliceOffset = 0x120000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -316,18 +317,20 @@ void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::spa
     Expect(output, Bits(DrawnDepth), "3-slice D32 2D array through a 2D shader image");
 }
 
-// A plane array from a later base slice is still refused (its slice offsets are not modeled here).
-void RefusalCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
-    bool refused = false;
-    try {
-        Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
-        shape.baseArray = 1;
-        Load(device, block.At(ArrayOffset), shape, 0, output);
-    } catch (const std::runtime_error& error) {
-        refused = std::string(error.what()).find("sampling the depth planes of depth surface") != std::string::npos;
-        if (!refused) throw;
-    }
-    Require(refused, "a depth plane array from base slice 1 was not refused");
+void BaseSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(BaseSliceOffset);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
+    FillSlice(base + 2u * SliceBytes, SliceBytes, Bits(0.75f), 4u);
+    Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
+    shape.baseArray = 1;
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.5f), "D32 2D array from base slice 1, view slice 0");
+    Load(device, base, shape, 1, output);
+    Expect(output, Bits(0.75f), "D32 2D array from base slice 1, view slice 1");
+    shape.baseArray = 2;
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.75f), "D32 2D array from base slice 2, view slice 0");
 }
 
 }
@@ -343,7 +346,7 @@ int main() {
         IntegerCase(*device, block, output);
         DepthBitsArrayCase(*device, block, output);
         FirstSliceCase(*device, block, output);
-        RefusalCase(*device, block, output);
+        BaseSliceCase(*device, block, output);
         std::puts("depth plane sampling tests passed");
         return 0;
     } catch (const std::exception& error) {
