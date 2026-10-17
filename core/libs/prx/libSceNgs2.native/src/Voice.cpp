@@ -48,6 +48,9 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 }
 
 void Ngs2Voice::ResetSetup() {
+    callback = nullptr;
+    callbackData = 0;
+    callbackFlags = 0;
     ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});

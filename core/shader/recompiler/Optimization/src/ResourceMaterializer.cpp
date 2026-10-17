@@ -1383,7 +1383,13 @@ const char* ResourceMaterializer::UnnormalizedSampleMismatch(const ImageResource
     return nullptr;
 }
 
-RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {
+RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptorIn, std::span<const ImageResource> modes) {
+    DescriptorValue adjusted = descriptorIn;
+    if (rawImageType(descriptorIn) == ImageType::Color2DMsaa &&
+        std::none_of(modes.begin(), modes.end(), [](const ImageResource& mode) { return mode.dimension == RdnaImageDimension::Dim2DMsaa || mode.dimension == RdnaImageDimension::Dim2DMsaaArray; })) {
+        adjusted.dwords[3] = (adjusted.dwords[3] & ~((0xfu << 28u) | (0xfu << 16u))) | (static_cast<std::uint32_t>(ImageType::Color2D) << 28u);
+    }
+    const DescriptorValue& descriptor = adjusted;
     RuntimeImageModeMatch result;
     const auto reject = [&](PoisonReason reason, std::string detail) {
         result.reason = reason;

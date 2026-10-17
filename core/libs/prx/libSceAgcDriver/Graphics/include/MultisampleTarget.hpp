@@ -56,6 +56,7 @@ bool MultisampledFillClearColor(const ColorTarget& target, std::uint32_t fill, V
 bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colorFill, const ColorTarget& use, VkClearColorValue& clear);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target);
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
+std::shared_ptr<Texture> MultisampleTargetResolvedTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource);
 bool MultisampleTargetStorable(const Context& context, const ColorTarget& target);

@@ -245,6 +245,73 @@ public:
         return texture;
     }
 
+    std::shared_ptr<Texture> Resolved(VkComponentMapping components) {
+        Require(cmask.Refusal().empty(), cmask.Refusal());
+        Require(Recorder::Active() != nullptr, "a multisampled color target is only resolved for recorded draws and dispatches");
+        SettleStorageWrites();
+        ApplyFastClear(target);
+        if (resolvedImage == VK_NULL_HANDLE) {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = target.format;
+            info.extent = {target.extent.width, target.extent.height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &resolvedImage), "vkCreateImage resolved target");
+            VkMemoryRequirements requirements{};
+            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, resolvedImage, &requirements);
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &resolvedMemory), "vkAllocateMemory resolved target");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, resolvedImage, resolvedMemory, 0), "vkBindImageMemory resolved target");
+            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = resolvedImage;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = target.format;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &resolvedView), "vkCreateImageView resolved target");
+            recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+                VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toGeneral.image = resolvedImage;
+                toGeneral.subresourceRange = viewInfo.subresourceRange;
+                toGeneral.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+                if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
+            });
+        }
+        const std::array<VkImageView, 2> views{view, resolvedView};
+        auto framebuffer = std::make_shared<Framebuffer>(context, ResolvePass(), views, target.extent);
+        recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            begin.renderPass = ResolvePass();
+            begin.framebuffer = framebuffer->Handle();
+            begin.renderArea = {{0, 0}, target.extent};
+            context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+            context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            if (recorder != nullptr) {
+                Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+                recorder->Keep(framebuffer);
+            }
+        });
+        const std::array<std::uint32_t, 4> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)};
+        if (const auto found = resolvedTextures.find(key); found != resolvedTextures.end()) return found->second;
+        auto texture = std::make_shared<Texture>(context, resolvedImage, target.format, VK_IMAGE_ASPECT_COLOR_BIT, components);
+        resolvedTextures.emplace(key, texture);
+        return texture;
+    }
+
     VkRenderPass ResolvePass() {
         if (resolvePass != VK_NULL_HANDLE) return resolvePass;
         std::array<VkAttachmentDescription, 2> attachments{};
@@ -299,6 +366,10 @@ private:
     VkImageView storageView = VK_NULL_HANDLE;
     bool storageWritten = false;
     std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> textures;
+    std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> resolvedTextures;
+    VkImage resolvedImage = VK_NULL_HANDLE;
+    VkDeviceMemory resolvedMemory = VK_NULL_HANDLE;
+    VkImageView resolvedView = VK_NULL_HANDLE;
     std::vector<GuestMemory::UnchangedQuery> dccRanges;
 
     VkClearColorValue initialDccClear(const ColorTarget& use) {
@@ -351,6 +422,10 @@ private:
 
     void release() noexcept {
         textures.clear();
+        resolvedTextures.clear();
+        if (resolvedView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, resolvedView, nullptr);
+        if (resolvedImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, resolvedImage, nullptr);
+        if (resolvedMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, resolvedMemory, nullptr);
         if (resolvePass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
         if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
         destroy({image, memory, view});
@@ -694,6 +769,18 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
     char text[320];
     std::snprintf(text, sizeof(text), "AGC graphics: sampling multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));
     throw std::runtime_error(text);
+}
+
+std::shared_ptr<Texture> MultisampleTargetResolvedTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
+    std::lock_guard lock(targetsMutex());
+    const auto format = ResolveTextureFormat(resource.format);
+    for (const auto& target : targets()) {
+        if (!target->active->load(std::memory_order_acquire)) continue;
+        if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
+        const auto& rendered = target->target;
+        if (rendered.format == format && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) return target->Resolved(components);
+    }
+    return nullptr;
 }
 
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target) {
