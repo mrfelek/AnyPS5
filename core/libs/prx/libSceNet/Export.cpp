@@ -87,6 +87,7 @@ constexpr int NET_SO_ERROR = 0x1007;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
 constexpr int NET_SO_BROADCAST = 0x20;
+constexpr int NET_SO_ONESBCAST = 0x10000;
 constexpr int NET_SO_SNDBUF = 0x1001;
 constexpr int NET_SO_RCVBUF = 0x1002;
 constexpr int NET_SO_SCE_SNDTIMEO = 0x1105;
@@ -252,6 +253,7 @@ struct Sock {
     int reported_error = 0;
     int snd_buffer = 0;
     int rcv_buffer = 0;
+    int onesbcast = 0;
 };
 
 #ifdef _WIN32
@@ -1177,6 +1179,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
             return fail(native_error());
+    } else if (optname == NET_SO_ONESBCAST) {
     } else {
         return fail(NET_EOPNOTSUPP);
     }
@@ -1188,6 +1191,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (optname == NET_SO_SNDTIMEO) it->second.snd_timeout_us = value;
         if (optname == NET_SO_SNDBUF) it->second.snd_buffer = value;
         if (optname == NET_SO_RCVBUF) it->second.rcv_buffer = value;
+        if (optname == NET_SO_ONESBCAST) it->second.onesbcast = value;
     }
     return 0;
 }
@@ -1215,6 +1219,7 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         case NET_SO_NBIO: value = socket.nonblock ? 1 : 0; break;
         case NET_SO_RCVTIMEO: value = socket.rcv_timeout_us; break;
         case NET_SO_SNDTIMEO: value = socket.snd_timeout_us; break;
+        case NET_SO_ONESBCAST: value = socket.onesbcast; break;
         case NET_SO_ERROR: {
             int pending = 0;
             NativeLength size = sizeof(pending);

@@ -1,3 +1,16 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_safe_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSafeErrors.cpp)
+    target_include_directories(guest_safe_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_safe_error_tests PRIVATE libc)
+    configure_windows_unwind(guest_safe_error_tests)
+    add_test(NAME guest_safe_errors COMMAND guest_safe_error_tests)
+    set_tests_properties(guest_safe_errors PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_safe_errors PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/General.cpp

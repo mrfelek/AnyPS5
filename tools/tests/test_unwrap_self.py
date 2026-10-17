@@ -226,6 +226,51 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(output.exists())
 
+    def test_file_empty_load_with_stale_offset_preserves_memory(self):
+        for offset in (0, 0x1900, 0xffffffffffffffff):
+            with self.subTest(offset=offset):
+                segments = default_segments() + [(PT_LOAD, 6, offset, 0x4000, 0, PAGE)]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 3 * 56 + 40, 0x2000)
+                original = bytes(container)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                self.assertEqual(headers[3], (PT_LOAD, 6, 0, 0x4000, 0x4000, 0, 0x2000, PAGE))
+                self.assertEqual(data[headers[0][2]:headers[0][2] + headers[0][5]], pattern(1, 0x100))
+                self.assertEqual(data[headers[1][2]:headers[1][2] + headers[1][5]], pattern(9, 0x80))
+                self.assertEqual((Path(self.directory) / "input.self").read_bytes(), original)
+
+    def test_nonempty_load_with_unmapped_offset_is_still_refused(self):
+        segments = default_segments() + [(PT_LOAD, 6, 0x1900, 0x4000, 1, PAGE)]
+        container = build_container(segments, default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("segment 3 does not fit the file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_nonempty_segment_in_file_empty_load_is_still_refused(self):
+        segments = default_segments() + [(PT_LOAD, 6, 0x1900, 0x4000, 0, PAGE),
+                                         (PT_DYNAMIC, 6, 0x1900, 0x4000, 1, 8)]
+        container = bytearray(build_container(segments, default_records(), default_payloads()))
+        struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 3 * 56 + 40, 0x2000)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("does not fit the file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_zero_size_segment_outside_pt_load_is_accepted(self):
+        segments = default_segments() + [(PT_TLS, 4, 0x1900, 0x2000, 0, 8)]
+        container = build_container(segments, default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        tls = [header for header in headers if header[0] == PT_TLS][0]
+        self.assertEqual(tls[5], 0)
+        self.assertEqual(tls[2], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

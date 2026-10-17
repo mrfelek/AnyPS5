@@ -17,6 +17,12 @@ function(add_test_executable target)
     endif()
 endfunction()
 
+function(add_asan_test_options test options)
+    if(ANYPS5_ENABLE_ASAN)
+        set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "ASAN_OPTIONS=string_append::${options}")
+    endif()
+endfunction()
+
 option(BUILD_TESTING "Build and register relinker tests" OFF)
 option(ANYPS5_RELINKER_ONLY "Build the relinker without system libraries or third-party dependencies" OFF)
 option(ANYPS5_BUILD_WASM "Build the browser relinker" OFF)

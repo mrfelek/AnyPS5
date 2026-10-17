@@ -41,8 +41,8 @@ static void TestErrorsAndInfo() {
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SAMPLER, nullptr, nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
 
     Ngs2SystemInfo info{};
-    Require(sceNgs2SystemGetInfo(0x1234, &info, sizeof(info)) == static_cast<int>(0x804A0230u));
-    Require(sceNgs2RackDestroy(0x1234, nullptr) == static_cast<int>(0x804A0261u));
+    Require(sceNgs2SystemGetInfo(0x1234, &info, sizeof(info)) == static_cast<int>(0x804A8201u));
+    Require(sceNgs2RackDestroy(0x1234, nullptr) == static_cast<int>(0x804A8202u));
 
     const auto system = CreateSystem();
     const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);

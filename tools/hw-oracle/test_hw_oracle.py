@@ -79,6 +79,35 @@ class OracleCacheTests(unittest.TestCase):
 
 
 class InputRowsTests(unittest.TestCase):
+    def test_successful_dispatch_without_output_cannot_reuse_previous_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Path(directory) / "runner.py"
+            runner.write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "output = Path(sys.argv[3])\n"
+                "marker = output.with_suffix('.seen')\n"
+                "if not marker.exists():\n"
+                "    output.write_bytes(bytes(int(sys.argv[1]) * 64))\n"
+                "    marker.touch()\n", encoding="utf-8")
+            for wave64 in (False, True):
+                with self.subTest(wave64=wave64), patch.object(hw_oracle, "assemble", return_value=runner), \
+                        patch.object(hw_oracle, "oracle", return_value=sys.executable):
+                    with self.assertRaises(FileNotFoundError):
+                        hw_oracle.run("s_nop 0", [(0, 0, 0, 0)] * 1025, wave64=wave64, **MODES)
+
+
+    def test_oracle_output_must_match_the_padded_dispatch_size(self):
+        for delta in (-1, 1, 64):
+            def dispatch(command, **kwargs):
+                Path(command[4]).write_bytes(bytes(int(command[2]) * 64 + delta))
+
+            with self.subTest(delta=delta), patch.object(hw_oracle, "assemble", return_value="kernel.co"), \
+                    patch.object(hw_oracle, "oracle", return_value="oracle"), \
+                    patch.object(hw_oracle.subprocess, "run", side_effect=dispatch):
+                with self.assertRaisesRegex(ValueError, "Oracle output size"):
+                    hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], **MODES)
+
+
     def test_invalid_rows_fail_before_assembler_or_gpu_lookup(self):
         for row in ((1, 2, 3), (1, 2, 3, 4, 5), (-1, 0, 0, 0),
                     (0x100000000, 0, 0, 0), (1.5, 0, 0, 0), ("1", 0, 0, 0)):

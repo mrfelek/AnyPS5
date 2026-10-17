@@ -30,6 +30,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <condition_variable>
@@ -3883,9 +3884,36 @@ struct MockDescriptorWrite {
     std::vector<VkDescriptorImageInfo> images;
 };
 
+struct LiveCounter {
+    std::atomic<std::int64_t> value{0};
+    LiveCounter() = default;
+    LiveCounter(const LiveCounter& other) : value(other.value.load()) {}
+    LiveCounter& operator=(const LiveCounter& other) {
+        value.store(other.value.load());
+        return *this;
+    }
+    operator std::int64_t() const { return value.load(); }
+    LiveCounter& operator++() {
+        ++value;
+        return *this;
+    }
+    LiveCounter& operator--() {
+        --value;
+        return *this;
+    }
+    LiveCounter& operator+=(std::int64_t count) {
+        value += count;
+        return *this;
+    }
+    LiveCounter& operator-=(std::int64_t count) {
+        value -= count;
+        return *this;
+    }
+};
+
 struct MockVulkan {
     std::uint64_t next = 1;
-    std::int64_t live = 0;
+    LiveCounter live;
     std::map<VkBuffer, VkDeviceSize> bufferSizes;
     std::map<VkBuffer, VkBufferUsageFlags> bufferUsage;
     std::map<VkDeviceMemory, VkMemoryAllocateFlags> allocationFlags;

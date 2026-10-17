@@ -2032,6 +2032,11 @@ struct VideoOutColorSettings {
     std::uint32_t reserved[3] = {};
 };
 
+struct VideoOutColorSpaceConversionSettings {
+    std::uint32_t internalData[8] = {};
+};
+static_assert(sizeof(VideoOutColorSpaceConversionSettings) == 32);
+
 
 using atexit_func_t = void (*)();
 

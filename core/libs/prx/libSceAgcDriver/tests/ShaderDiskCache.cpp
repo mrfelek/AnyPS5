@@ -17,7 +17,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <iostream>
@@ -29,6 +31,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -728,6 +731,64 @@ void verifyFloatModeSerialization() {
     sample.request.context.floatMode = mode;
     const auto back = serializer.Deserialize(serializer.Serialize(sample.request));
     require(back.request.context.floatMode == mode, "the float mode did not survive serialization");
+}
+
+int runLargeFileWrite() {
+    constexpr std::size_t size = (std::size_t{2} << 30u) + 4096u;
+    const auto directory = std::filesystem::temp_directory_path() / "aps5-shader-disk-cache-large-file-test";
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    std::filesystem::create_directories(directory, error);
+    const auto space = std::filesystem::space(directory, error);
+    if (error || space.available < size + (std::uintmax_t{1} << 30u)) {
+        std::cout << "skipping: not enough free disk space for a file of more than 2 GiB\n";
+        return 77;
+    }
+    std::vector<std::byte> bytes;
+    try {
+        bytes.resize(size);
+    } catch (const std::bad_alloc&) {
+        std::cout << "skipping: cannot allocate a buffer of more than 2 GiB\n";
+        return 77;
+    }
+    const std::array<std::size_t, 6> samples{0u, (std::size_t{1} << 30u) - 1u, std::size_t{1} << 30u, (std::size_t{2} << 30u) - 1u, std::size_t{2} << 30u, size - 1u};
+    for (std::size_t index = 0; index < samples.size(); ++index) bytes[samples[index]] = static_cast<std::byte>(0xa0u + index);
+    const auto path = directory / "pipelines.bin";
+    auto written = std::make_shared<std::promise<bool>>();
+    auto result = written->get_future();
+    std::thread([written, &bytes, path] {
+        try {
+            written->set_value(WriteFileAtomically(path, bytes));
+        } catch (...) {
+            written->set_exception(std::current_exception());
+        }
+    }).detach();
+    if (result.wait_for(std::chrono::seconds(120)) != std::future_status::ready) {
+        std::cerr << "WriteFileAtomically did not return within 120 s for a file of more than 2 GiB\n";
+        std::cerr.flush();
+        std::_Exit(1);
+    }
+    require(result.get(), "cannot write a cache file of more than 2 GiB");
+    require(std::filesystem::file_size(path) == size, "the cache file of more than 2 GiB has the wrong size");
+    {
+        std::ifstream file(path, std::ios::binary);
+        require(static_cast<bool>(file), "cannot open the cache file of more than 2 GiB");
+        for (std::size_t index = 0; index < samples.size(); ++index) {
+            file.seekg(static_cast<std::streamoff>(samples[index]));
+            char value = 0;
+            require(file.get(value) && static_cast<std::byte>(value) == bytes[samples[index]], "the cache file of more than 2 GiB differs at byte " + std::to_string(samples[index]));
+        }
+    }
+    std::size_t entries = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        static_cast<void>(entry);
+        ++entries;
+    }
+    require(entries == 1u, "the cache file of more than 2 GiB left a temporary file behind");
+    std::filesystem::remove_all(directory, error);
+    require(!error, "cannot remove the large file test directory: " + error.message());
+    std::cout << "large cache file write test passed\n";
+    return 0;
 }
 
 void verifyAtomicReplacement(const std::filesystem::path& directory) {
@@ -2124,6 +2185,7 @@ int main(int argc, char** argv) {
             std::cout << "artifact codec tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--large-file") return runLargeFileWrite();
         if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--load-prebuilt") return runPrebuiltLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();

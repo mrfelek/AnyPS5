@@ -6531,7 +6531,7 @@ void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
 #ifdef _WIN32
     void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
-    void* block = std::aligned_alloc(65536, bytes);
+    void* block = std::aligned_alloc(65536, (bytes + 65535u) & ~std::size_t{65535u});
 #endif
     Require(block != nullptr, "cannot allocate the FMASK decompress block");
     std::memset(block, 0, bytes);

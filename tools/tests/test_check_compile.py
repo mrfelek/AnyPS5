@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,21 @@ TOOL = Path(__file__).resolve().parents[1] / "check_compile.py"
 
 
 class CheckCompileTests(unittest.TestCase):
+    def test_syntax_check_preserves_existing_clang_compilation_fragment(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to check compilation-fragment side effects")
+        source = self.source("unit.c")
+        fragment = self.build / "fragment.json"
+        for option in (f'-MJ "{fragment}"', f'-MJ"{fragment}"'):
+            with self.subTest(option=option):
+                fragment.write_bytes(b"previous compilation fragment")
+                self.manifest([self.entry("unit.c", f'"{compiler}" -c {option} "{source}"')])
+                result = self.tool("unit.c")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(fragment.read_bytes(), b"previous compilation fragment")
+
+
     def setUp(self):
         holder = tempfile.TemporaryDirectory()
         self.addCleanup(holder.cleanup)

@@ -300,8 +300,8 @@ class CommentStateTests(unittest.TestCase):
         return pr_overlap.report(found, f"https://github.com/owner/project/blob/{commit}")
 
     def run_step(self, report, comment):
-        (self.root / "overlap" / "42.md").write_text(report, encoding="utf-8", newline="\n")
-        (self.root / "comment").write_text(json.dumps([5, comment]) + "\n" if comment else "", encoding="utf-8", newline="\n")
+        (self.root / "overlap" / "42.md").write_bytes(report.encode("utf-8"))
+        (self.root / "comment").write_bytes((json.dumps([5, comment]) + "\n" if comment else "").encode("utf-8"))
         calls = self.root / "calls"
         calls.write_text("", encoding="utf-8")
         script = "\n".join([
@@ -310,7 +310,7 @@ class CommentStateTests(unittest.TestCase):
             'gh() { printf \'%s\\n\' "$*" >> "$RUNNER_TEMP/calls"; case "$*" in "api repos/"*) cat "$RUNNER_TEMP/comment";; esac; }',
             self.step,
         ])
-        (self.root / "step.sh").write_text(script, encoding="utf-8", newline="\n")
+        (self.root / "step.sh").write_bytes(script.encode("utf-8"))
         environment = dict(os.environ, RUNNER_TEMP=str(self.root), GH_REPO="owner/project")
         result = subprocess.run(["bash", "step.sh"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

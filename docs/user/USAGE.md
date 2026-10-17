@@ -144,9 +144,10 @@ python3 tools/pad_input.py /tmp/anyps5-pad down --hold-ms 500
 python3 tools/pad_input.py /tmp/anyps5-pad release
 python3 tools/pad_input.py /tmp/anyps5-pad release --left-stick 128 0 --hold-ms 2000
 python3 tools/pad_input.py /tmp/anyps5-pad cross --left-stick 255 128 --right-stick 0 128
+python3 tools/pad_input.py /tmp/anyps5-pad touch-right
 ```
 
-Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
+Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. `touch-left` and `touch-right` press the touchpad with a finger on its left or right half, as the `TouchLeft` and `TouchRight` keys do; in the command file they are bits `0x200000` and `0x400000` of the button field. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
 
 ### System fonts
 
@@ -155,6 +156,17 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 ### Console language
 
 Games ask for the console's language with `sceSystemServiceParamGetInt` and show their text in it when they have it. It is English (United States) unless `ANYPS5_LANGUAGE` is set to another console language number: 0 Japanese, 1 English (United States), 2 French, 3 Spanish, 4 German, 5 Italian, 6 Dutch, 7 Portuguese (Portugal), 8 Russian, 9 Korean, 10 Chinese (Traditional), 11 Chinese (Simplified), 12 Finnish, 13 Swedish, 14 Danish, 15 Norwegian, 16 Polish, 17 Portuguese (Brazil), 18 English (United Kingdom), 19 Turkish, 20 Spanish (Latin America), 21 Arabic, 22 French (Canada), 23 Czech, 24 Hungarian, 25 Greek, 26 Romanian, 27 Thai, 28 Vietnamese, 29 Indonesian, 30 Ukrainian. For example, `ANYPS5_LANGUAGE=21` selects Arabic. An empty value is the same as an unset one; any other value stops the game at its first language query with an error that names the variable.
+
+### PlayGo dumps without metadata
+
+When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. Requests for those IDs stop with an error by default. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose an answer for that dump:
+
+| Value | Answer for an unlisted chunk ID | Observed title that needs it |
+|-------|---------------------------------|------------------------------|
+| `installed` | Report it as installed (`LOCAL_FAST`). | High on Life (PPSA15388) needs this to load its saves. |
+| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) uses this result to end its chunk-ID search. |
+
+Leave the variable unset to keep the explicit error. Any other value also stops with an error. Dumps that include PlayGo metadata are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
 
 ### GPU selection
 
@@ -249,6 +261,8 @@ ELF modules in `--modules` are audited regardless of filename: their undefined s
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+The audit also walks the built libraries' own host dependencies: each `.prx` under `--libs` has its PE imports (or ELF `DT_NEEDED` entries) checked for `.prx` names with no file in `--libs` or `--modules`, following present libraries transitively. Gaps fail the audit and are reported as `Importer: <root> Chain: <root> -> ... -> <missing>` lines, since the loader fails on them even when every game import resolves.
 
 | Option | Effect |
 |--------|--------|
