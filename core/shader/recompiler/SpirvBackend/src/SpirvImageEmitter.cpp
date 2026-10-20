@@ -700,6 +700,52 @@ std::uint32_t EmitOneDimensionalGatherLz(SpirvValueEmitContext& ctx, const Image
     return result;
 }
 
+std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+    auto& state = ctx.state;
+    const auto numericClass = access.image.numericClass;
+    const auto f32 = TypeF32(state);
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeU32Vector(state, 3), size, image, ConstantU32(state, 0));
+    std::array<std::uint32_t, 3> extents{};
+    std::array<std::uint32_t, 3> starts{};
+    for (std::uint32_t axis = 0; axis < 3u; axis++) {
+        const auto extent = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), extent, size, axis);
+        extents[axis] = Unary(state, spv::OpConvertUToF, f32, extent);
+        const auto coord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, f32, coord, setup.coord, axis);
+        auto texel = Binary(state, spv::OpFMul, f32, coord, extents[axis]);
+        if (axis < 2u) {
+            texel = Binary(state, spv::OpFSub, f32, texel, ConstantF32(state, 0x3f000000u));
+        }
+        starts[axis] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, starts[axis], GlslStd450(state), GLSLstd450Floor, texel);
+    }
+    const auto center = [&](std::uint32_t axis, std::uint32_t step) {
+        return Binary(state, spv::OpFDiv, f32, Binary(state, spv::OpFAdd, f32, starts[axis], ConstantF32(state, step == 0u ? 0x3f000000u : 0x3fc00000u)), extents[axis]);
+    };
+    const auto slice = center(2u, 0u);
+    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
+    const auto vectorType = ImageVectorType(state, numericClass, 4);
+    const auto scalarType = ImageScalarType(state, numericClass);
+    const auto component = ImageConversionFormat(access.image).format == IrBufferFormat::Invalid ? ImageGatherComponent(EffectiveDmask(access.mem)) : 0u;
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 4> footprint{{{0u, 1u}, {1u, 1u}, {1u, 0u}, {0u, 0u}}};
+    std::array<std::uint32_t, 4> values{};
+    for (std::uint32_t index = 0; index < 4u; index++) {
+        const auto coord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 3), coord, center(0u, footprint[index].first), center(1u, footprint[index].second), slice);
+        const auto texel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageSampleExplicitLod, vectorType, texel, sampled, coord, spv::ImageOperandsLodMask, ZeroF32(state));
+        values[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, scalarType, values[index], texel, component);
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, vectorType, result, values[0], values[1], values[2], values[3]);
+    return result;
+}
+
 std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
     auto& state = ctx.state;
     const auto info = ImageConversionFormat(access.image);
@@ -1202,6 +1248,14 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             ctx.Fail(access.inst, "has an unsupported 1D gather variant");
         }
         const auto sample = EmitOneDimensionalGatherLz(ctx, access, setup);
+        ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true));
+        return;
+    }
+    if (dimension == RdnaImageDimension::Dim3D) {
+        if (setup.dref || !HasFlag(mem, RdnaImageSampleFlagLevelZero) || HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) || setup.layout.offset != NoImageComponent) {
+            ctx.Fail(access.inst, "has an unsupported 3D gather variant");
+        }
+        const auto sample = EmitVolumeGatherLz(ctx, access, setup);
         ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true));
         return;
     }
