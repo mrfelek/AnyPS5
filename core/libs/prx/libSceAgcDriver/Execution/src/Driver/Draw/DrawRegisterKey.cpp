@@ -1,8 +1,3 @@
-#include <vector>
-#include <cstdio>
-#include <atomic>
-#include <tuple>
-#include <mutex>
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -150,53 +145,21 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
     RegisterStateKeyParts parts;
     auto key = RegisterStateKey(queue, allUserWords, true, &shapeKey, components != nullptr ? &parts : nullptr);
     if (verify && key != RegisterStateKey(queue, allUserWords, false)) throw std::runtime_error("incremental register fingerprint disagrees with full state");
-    static std::atomic<std::uint64_t> probeCalls{0}, probeAliased{0}, probeNoRelocation{0};
-    const auto probeN = probeCalls.fetch_add(1) + 1;
-    if (aliased) probeAliased.fetch_add(1);
-    else if (relocation == nullptr || relocation->words.empty()) probeNoRelocation.fetch_add(1);
-    std::vector<std::tuple<std::uint32_t, int, std::uint64_t, std::uint32_t>> probeWords;
     if (aliased) {
         mixOther(shapeKey);
         forEachKeyedUserWord(queue, allUserWords, [&](std::uint32_t offset, std::uint32_t value) {
             mixOther(offset);
             const auto word = std::find_if(relocation->words.begin(), relocation->words.end(), [&](const RelocatableUserWord& candidate) { return candidate.reg == offset; });
             if (word == relocation->words.end()) {
-                probeWords.emplace_back(offset, 0, value, value);
                 mixOther(value);
                 return;
             }
-            if (word->forwarded) { probeWords.emplace_back(offset, 2, 0, value); return; }
+            if (word->forwarded) return;
             auto& stage = content[DrawAliasKeys::Stage(offset)];
-            const auto contribution = relocatedContentKey(*word, value, readable);
-            probeWords.emplace_back(offset, 1, contribution, value);
-            stage = (stage ^ offset ^ contribution) * 0x100000001b3ull;
+            stage = (stage ^ offset ^ relocatedContentKey(*word, value, readable)) * 0x100000001b3ull;
         });
         mixOther(deviceSerial);
-        static std::mutex probeMutex;
-        static std::unordered_map<std::uint64_t, std::vector<std::tuple<std::uint32_t, int, std::uint64_t, std::uint32_t>>> lastByShape;
-        static std::atomic<std::uint64_t> compared{0}, rawChanged{0}, relocChanged{0}, layoutChanged{0}, identical{0};
-        static std::atomic<int> samples{0};
-        std::lock_guard probeLock(probeMutex);
-        auto& last = lastByShape[shapeKey];
-        if (!last.empty()) {
-            const auto n = compared.fetch_add(1) + 1;
-            if (last.size() != probeWords.size()) layoutChanged.fetch_add(1);
-            else {
-                bool anyRaw = false, anyReloc = false;
-                for (std::size_t k = 0; k < last.size(); ++k) {
-                    if (std::get<1>(probeWords[k]) == 2 || std::get<2>(last[k]) == std::get<2>(probeWords[k])) continue;
-                    (std::get<1>(probeWords[k]) == 1 ? anyReloc : anyRaw) = true;
-                    if (samples.load() < 60 && samples.fetch_add(1) < 60) std::fprintf(stderr, "[tmp-alias] shape 0x%llx user word 0x%x (%s, %zu keyed, %zu relocatable): value 0x%08x -> 0x%08x\n", (unsigned long long)shapeKey, std::get<0>(probeWords[k]), std::get<1>(probeWords[k]) ? "relocated content" : "raw", probeWords.size(), relocation->words.size(), std::get<3>(last[k]), std::get<3>(probeWords[k]));
-                }
-                if (anyRaw) rawChanged.fetch_add(1);
-                if (anyReloc) relocChanged.fetch_add(1);
-                if (!anyRaw && !anyReloc) identical.fetch_add(1);
-            }
-            if (n % 50000 == 0) std::fprintf(stderr, "[tmp-alias] %llu same-shape repeats: %llu identical, %llu raw word changed, %llu relocated content changed, %llu layout changed\n", (unsigned long long)n, (unsigned long long)identical.load(), (unsigned long long)rawChanged.load(), (unsigned long long)relocChanged.load(), (unsigned long long)layoutChanged.load());
-        }
-        last = probeWords;
     }
-    if (probeN % 200000 == 0) std::fprintf(stderr, "[tmp-alias] %llu key builds: %llu with an alias, %llu with no relocation learned\n", (unsigned long long)probeN, (unsigned long long)probeAliased.load(), (unsigned long long)probeNoRelocation.load());
     const auto mix = [&](std::uint64_t value) {
         key ^= value;
         key *= 0x100000001b3ull;
