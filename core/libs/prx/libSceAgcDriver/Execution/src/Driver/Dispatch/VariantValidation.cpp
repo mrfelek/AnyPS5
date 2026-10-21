@@ -1,3 +1,6 @@
+#include <cstdio>
+#include <atomic>
+#include <chrono>
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
@@ -89,7 +92,9 @@ bool Driver::vouchedValidation() {
     return enabled;
 }
 
-EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
+static thread_local double tmpStepUs[6];
+EntryOutcome Driver::validateVariantTimed(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
+    auto tmpT0 = std::chrono::steady_clock::now(); auto tmpLap = [&](int k) { const auto n = std::chrono::steady_clock::now(); tmpStepUs[k] += std::chrono::duration<double, std::micro>(n - tmpT0).count(); tmpT0 = n; };
     if (live != nullptr) live->clear();
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
@@ -118,7 +123,9 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         }
     }
     const std::span<const std::pair<std::uint64_t, std::uint64_t>> runs = vouched.empty() ? std::span<const std::pair<std::uint64_t, std::uint64_t>>(variant.runs) : std::span<const std::pair<std::uint64_t, std::uint64_t>>(checked);
+    tmpLap(0);
     if (!syncPendingRuns(program, queue, *variant.compiled, regions, runsSynced, pending, sampling, vouched)) return EntryOutcome::Differing;
+    tmpLap(1);
     auto publish = Graphics::Recorder::PublishGeneration();
     auto pendingSerial = Graphics::StorageTexture::PendingSerial();
     auto forget = GuestMemory::ForgetSerial();
@@ -135,6 +142,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         forget = GuestMemory::ForgetSerial();
         if (Graphics::StorageTexture::AnyPendingOverlaps(variant.runs) || Graphics::AnyShadowedOverlaps(variant.runs)) return EntryOutcome::FlushingImage;
     }
+    tmpLap(2);
     if ((forget & 1) != 0) return EntryOutcome::ForgetMoved;
     for (const auto& label : deferredLabels().labels) {
         for (const auto& [begin, end] : runs) {
@@ -147,13 +155,27 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         }
     }
 
+    tmpLap(3);
     pending.Load();
     bool unmapped = false;
     if (!validateCaptured(program, queue, regions, *variant.compiled, true, pending, &unmapped, &sampling, masked ? &mask : nullptr, vouched)) return unmapped ? EntryOutcome::Inaccessible : EntryOutcome::Differing;
+    tmpLap(4);
     if (Graphics::Recorder::PublishGeneration() != publish) return EntryOutcome::PublishMoved;
     if (Graphics::StorageTexture::PendingSerial() != pendingSerial) return EntryOutcome::PendingMoved;
     if (GuestMemory::ForgetSerial() != forget) return EntryOutcome::ForgetMoved;
     return masked && !live->empty() ? EntryOutcome::EqualData : EntryOutcome::Equal;
 }
+
+EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
+    static std::atomic<std::uint64_t> calls{0};
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto result = validateVariantTimed(program, queue, variant, regions, imagesFlushed, runsSynced, sampling, live);
+    static thread_local double totalUs = 0; static thread_local std::uint64_t mine = 0;
+    totalUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    ++mine;
+    if (calls.fetch_add(1) % 200000 == 199999 && mine != 0) std::fprintf(stderr, "[tmp-validate] per call (thread avg over %llu): total %.2f us; pipeline overlap/drain + vouch %.2f, syncPendingRuns %.2f, storage/shadow overlaps %.2f, labels/legacy %.2f, validateCaptured compare %.2f\n", (unsigned long long)mine, totalUs / mine, tmpStepUs[0] / mine, tmpStepUs[1] / mine, tmpStepUs[2] / mine, tmpStepUs[3] / mine, tmpStepUs[4] / mine);
+    return result;
+}
+
 
 }

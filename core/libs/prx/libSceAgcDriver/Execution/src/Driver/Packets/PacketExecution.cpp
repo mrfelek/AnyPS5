@@ -320,7 +320,7 @@ void Driver::execute(const Submission& submission) {
             } else {
                 ms[DrawRowSkipped] = std::chrono::duration<double, std::milli>(now - packetTimer.start).count();
             }
-            addDrawPhases(ms, drawn && pending.phases, pending.captures);
+            addDrawPhases(ms, drawn && pending.phases, pending.captures, pending.kind);
         };
         if (profilePackets) packetProfile.flushMs += std::chrono::duration<double, std::milli>(packetTimer.start - flushStart).count();
 

@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <atomic>
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -177,7 +179,42 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
             for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
-            tagVariantRuns(*variant, regions, stageCapture.userDataUse, decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0), programs[i].hiddenUserWords, stageCapture.supplied);
+            static const bool relocateFetch = std::getenv("APS5_NO_VERTEX_FETCH_RELOCATION") == nullptr;
+            bool eligible = decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0);
+            const auto* use = &stageCapture.userDataUse;
+            ShaderRecompiler::SrtUserDataUse widened;
+            if (relocateFetch && !eligible && !decodeReads[i].empty() && std::all_of(decodeReads[i].begin(), decodeReads[i].end(), [](const Graphics::DecodeRead& read) { return read.origin >= 0 && read.origin < 64; })) {
+                widened = stageCapture.userDataUse;
+                for (const auto& read : decodeReads[i]) {
+                    widened.asBase |= std::uint64_t {1} << read.origin;
+                    for (std::uint32_t at = 0; at < read.size; at += sizeof(std::uint32_t)) widened.reads.emplace_back(read.address + at, read.origin);
+                }
+                use = &widened;
+                eligible = true;
+            }
+            tagVariantRuns(*variant, regions, *use, eligible, programs[i].hiddenUserWords, stageCapture.supplied);
+            {
+                static std::atomic<std::uint64_t> stages{0}, decodeOnly{0}, fetchOnly{0}, both{0}, eligibleNoBase{0}, eligibleBaseIsValue{0}, eligibleHidden{0}, eligibleCut{0}, eligibleOk{0};
+                const bool hasDecode = !decodeReads[i].empty();
+                const bool hasFetch = vertexInfos[i] && vertexInfos[i]->resourcesNum != 0;
+                const auto n = stages.fetch_add(1) + 1;
+                static std::atomic<std::uint64_t> bothRelocated{0}, bothUntraced{0}, bothNoWords{0};
+                if (hasDecode && hasFetch) { both.fetch_add(1); if (variant->relocatableWords != 0) bothRelocated.fetch_add(1); else if (!std::all_of(decodeReads[i].begin(), decodeReads[i].end(), [](const Graphics::DecodeRead& read) { return read.origin >= 0 && read.origin < 64; })) bothUntraced.fetch_add(1); else bothNoWords.fetch_add(1); }
+                else if (hasDecode) decodeOnly.fetch_add(1);
+                else if (hasFetch) fetchOnly.fetch_add(1);
+                else {
+                    const auto& use = stageCapture.userDataUse;
+                    const auto hidden = programs[i].hiddenUserWords;
+                    auto mask = use.asBase & ~use.asValue;
+                    auto afterHidden = hidden != 0 ? (hidden >= 64 ? 0 : mask & ~((std::uint64_t{1} << hidden) - 1)) : mask;
+                    if (use.asBase == 0) eligibleNoBase.fetch_add(1);
+                    else if (mask == 0) eligibleBaseIsValue.fetch_add(1);
+                    else if (afterHidden == 0) eligibleHidden.fetch_add(1);
+                    else if (variant->relocatableWords == 0) eligibleCut.fetch_add(1);
+                    else eligibleOk.fetch_add(1);
+                }
+                if (n % 20000 == 0) std::fprintf(stderr, "[tmp-reloc] %llu stage captures: not eligible: decode reads %llu, vertex fetch %llu, both %llu; eligible: no base word %llu, every base word also a value %llu, cut by hidden words %llu, cut by duplicate/uncovered reads %llu, relocatable %llu; vertex-fetch stages now relocatable %llu, with an untraced decode read %llu, traced but no relocatable word left %llu\n", (unsigned long long)n, (unsigned long long)decodeOnly.load(), (unsigned long long)fetchOnly.load(), (unsigned long long)both.load(), (unsigned long long)eligibleNoBase.load(), (unsigned long long)eligibleBaseIsValue.load(), (unsigned long long)eligibleHidden.load(), (unsigned long long)eligibleCut.load(), (unsigned long long)eligibleOk.load(), (unsigned long long)bothRelocated.load(), (unsigned long long)bothUntraced.load(), (unsigned long long)bothNoWords.load());
+            }
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
             tagBufferWords(*variant, stageCapture.bufferBaseWords);
             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {
