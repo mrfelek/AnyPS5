@@ -1,6 +1,8 @@
 #ifndef CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
+#include <stdexcept>
+#include <iterator>
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
 #include <algorithm>
@@ -449,6 +451,113 @@ enum class DescriptorRole {
     ImageStorageTable
 };
 
+
+// Experiment (not for PR): a bool sequence that keeps up to 128 flags inline, so copying a binding
+// does not allocate for its per-element flags.
+class FlagVector {
+public:
+    using value_type = bool;
+    using size_type = std::size_t;
+    class Reference {
+    public:
+        Reference(FlagVector& owner, std::size_t index) : _owner(owner), _index(index) {}
+        operator bool() const { return _owner.get(_index); }
+        Reference& operator=(bool value) { _owner.set(_index, value); return *this; }
+        Reference& operator=(const Reference& other) { _owner.set(_index, static_cast<bool>(other)); return *this; }
+        Reference& operator|=(bool value) { if (value) _owner.set(_index, true); return *this; }
+        Reference& operator&=(bool value) { if (!value) _owner.set(_index, false); return *this; }
+    private:
+        FlagVector& _owner;
+        std::size_t _index;
+    };
+    class const_iterator {
+    public:
+        using iterator_category = std::random_access_iterator_tag;
+        using value_type = bool;
+        using difference_type = std::ptrdiff_t;
+        using pointer = void;
+        using reference = bool;
+        const_iterator() = default;
+        const_iterator(const FlagVector* owner, std::size_t index) : _owner(owner), _index(index) {}
+        bool operator*() const { return _owner->get(_index); }
+        bool operator[](difference_type offset) const { return _owner->get(_index + static_cast<std::size_t>(offset)); }
+        const_iterator& operator++() { ++_index; return *this; }
+        const_iterator operator++(int) { auto copy = *this; ++_index; return copy; }
+        const_iterator& operator--() { --_index; return *this; }
+        const_iterator& operator+=(difference_type offset) { _index = static_cast<std::size_t>(static_cast<difference_type>(_index) + offset); return *this; }
+        const_iterator operator+(difference_type offset) const { auto copy = *this; copy += offset; return copy; }
+        const_iterator operator-(difference_type offset) const { auto copy = *this; copy += -offset; return copy; }
+        difference_type operator-(const const_iterator& other) const { return static_cast<difference_type>(_index) - static_cast<difference_type>(other._index); }
+        bool operator==(const const_iterator& other) const { return _index == other._index; }
+        bool operator!=(const const_iterator& other) const { return _index != other._index; }
+        bool operator<(const const_iterator& other) const { return _index < other._index; }
+    private:
+        const FlagVector* _owner = nullptr;
+        std::size_t _index = 0;
+    };
+    using iterator = const_iterator;
+
+    FlagVector() = default;
+    FlagVector(std::size_t count, bool value = false) { assign(count, value); }
+    FlagVector(std::initializer_list<bool> values) { for (bool value : values) push_back(value); }
+    FlagVector(const std::vector<bool>& values) { reserve(values.size()); for (bool value : values) push_back(value); }
+    operator std::vector<bool>() const { std::vector<bool> out(_size); for (std::size_t i = 0; i < _size; ++i) out[i] = get(i); return out; }
+
+    std::size_t size() const { return _size; }
+    bool empty() const { return _size == 0; }
+    void clear() { _size = 0; _inline = {}; _heap.clear(); }
+    void reserve(std::size_t count) { grow(count); }
+    void push_back(bool value) { grow(_size + 1); set(_size++, value); }
+    void resize(std::size_t count, bool value = false) { grow(count); for (std::size_t i = _size; i < count; ++i) set(i, value); for (std::size_t i = count; i < _size; ++i) set(i, false); _size = count; }
+    void assign(std::size_t count, bool value) { clear(); resize(count, value); }
+    bool operator[](std::size_t index) const { return get(index); }
+    Reference operator[](std::size_t index) { return Reference(*this, index); }
+    bool at(std::size_t index) const { if (index >= _size) throw std::out_of_range("FlagVector::at"); return get(index); }
+    Reference at(std::size_t index) { if (index >= _size) throw std::out_of_range("FlagVector::at"); return Reference(*this, index); }
+    bool front() const { return get(0); }
+    bool back() const { return get(_size - 1); }
+    const_iterator begin() const { return const_iterator(this, 0); }
+    const_iterator end() const { return const_iterator(this, _size); }
+    const_iterator cbegin() const { return begin(); }
+    const_iterator cend() const { return end(); }
+    bool operator==(const FlagVector& other) const {
+        if (_size != other._size) return false;
+        for (std::size_t i = 0; i < _size; ++i) if (get(i) != other.get(i)) return false;
+        return true;
+    }
+    bool operator!=(const FlagVector& other) const { return !(*this == other); }
+
+private:
+    static constexpr std::size_t InlineBits = 128;
+    const std::uint64_t* words() const { return _heap.empty() ? _inline.data() : _heap.data(); }
+    std::uint64_t* words() { return _heap.empty() ? _inline.data() : _heap.data(); }
+    std::size_t capacity() const { return _heap.empty() ? InlineBits : _heap.size() * 64u; }
+    void grow(std::size_t count) {
+        if (count <= capacity()) return;
+        std::vector<std::uint64_t> wider((count + 63u) / 64u * 2u, 0u);
+        const auto* from = words();
+        for (std::size_t w = 0; w < (capacity() / 64u); ++w) wider[w] = from[w];
+        _heap = std::move(wider);
+        _inline = {};
+    }
+    bool get(std::size_t index) const { return ((words()[index / 64u] >> (index % 64u)) & 1u) != 0u; }
+    void set(std::size_t index, bool value) {
+        auto& word = words()[index / 64u];
+        const auto bit = std::uint64_t{1} << (index % 64u);
+        word = value ? (word | bit) : (word & ~bit);
+    }
+    std::array<std::uint64_t, 2> _inline{};
+    std::vector<std::uint64_t> _heap;
+    std::uint32_t _size = 0;
+};
+
+inline bool operator==(const std::vector<bool>& a, const FlagVector& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) return false;
+    return true;
+}
+inline bool operator==(const FlagVector& a, const std::vector<bool>& b) { return b == a; }
+
 struct DescriptorBinding {
     DescriptorKind kind;
     DescriptorRole role;
@@ -458,30 +567,30 @@ struct DescriptorBinding {
     std::vector<std::uint32_t> guestDescriptor;
     bool readOnly = false;
     std::optional<DescriptorImageShape> imageShape;
-    std::vector<bool> samplerDepthCompare;
+    FlagVector samplerDepthCompare;
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
-    std::vector<bool> imageWritten;
-    std::vector<bool> imageDepthCompare;
-    std::vector<bool> imageAtomic;
-    std::vector<bool> imageAtomic64;
+    FlagVector imageWritten;
+    FlagVector imageDepthCompare;
+    FlagVector imageAtomic;
+    FlagVector imageAtomic64;
     std::vector<DescriptorImageShape> imageShapes;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
     // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.
-    std::vector<bool> bufferAtomic;
+    FlagVector bufferAtomic;
     // Guest buffer elements the shader may store to through this V# (any store or atomic in the
     // program, whatever its offset), one entry per element of a GuestBuffers binding, empty
     // otherwise. A false entry is proved: every access of that element is a load. A driver may then
     // skip the write-back and the pending-write note for the element; an element beyond the vector
     // (a producer that does not fill it) must be treated as written.
-    std::vector<bool> bufferWritten;
-    std::vector<bool> samplerUnnormalized;
-    std::vector<bool> samplerIntegerBorder;
-    std::vector<bool> samplerCoordinatesIgnored;
-    std::vector<bool> imageUnnormalized;
-    std::vector<bool> imageUnnormalizedBaseLevel;
+    FlagVector bufferWritten;
+    FlagVector samplerUnnormalized;
+    FlagVector samplerIntegerBorder;
+    FlagVector samplerCoordinatesIgnored;
+    FlagVector imageUnnormalized;
+    FlagVector imageUnnormalizedBaseLevel;
     std::vector<std::uint32_t> imageSamplers;
-    std::vector<bool> bufferRead;
+    FlagVector bufferRead;
     std::vector<std::uint32_t> bufferExtent;
 };
 

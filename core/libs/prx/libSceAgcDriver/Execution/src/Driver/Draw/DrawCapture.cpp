@@ -198,7 +198,8 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                 const bool hasDecode = !decodeReads[i].empty();
                 const bool hasFetch = vertexInfos[i] && vertexInfos[i]->resourcesNum != 0;
                 const auto n = stages.fetch_add(1) + 1;
-                if (hasDecode && hasFetch) both.fetch_add(1);
+                static std::atomic<std::uint64_t> bothRelocated{0}, bothUntraced{0}, bothNoWords{0};
+                if (hasDecode && hasFetch) { both.fetch_add(1); if (variant->relocatableWords != 0) bothRelocated.fetch_add(1); else if (!std::all_of(decodeReads[i].begin(), decodeReads[i].end(), [](const Graphics::DecodeRead& read) { return read.origin >= 0 && read.origin < 64; })) bothUntraced.fetch_add(1); else bothNoWords.fetch_add(1); }
                 else if (hasDecode) decodeOnly.fetch_add(1);
                 else if (hasFetch) fetchOnly.fetch_add(1);
                 else {
@@ -212,7 +213,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                     else if (variant->relocatableWords == 0) eligibleCut.fetch_add(1);
                     else eligibleOk.fetch_add(1);
                 }
-                if (n % 20000 == 0) std::fprintf(stderr, "[tmp-reloc] %llu stage captures: not eligible: decode reads %llu, vertex fetch %llu, both %llu; eligible: no base word %llu, every base word also a value %llu, cut by hidden words %llu, cut by duplicate/uncovered reads %llu, relocatable %llu\n", (unsigned long long)n, (unsigned long long)decodeOnly.load(), (unsigned long long)fetchOnly.load(), (unsigned long long)both.load(), (unsigned long long)eligibleNoBase.load(), (unsigned long long)eligibleBaseIsValue.load(), (unsigned long long)eligibleHidden.load(), (unsigned long long)eligibleCut.load(), (unsigned long long)eligibleOk.load());
+                if (n % 20000 == 0) std::fprintf(stderr, "[tmp-reloc] %llu stage captures: not eligible: decode reads %llu, vertex fetch %llu, both %llu; eligible: no base word %llu, every base word also a value %llu, cut by hidden words %llu, cut by duplicate/uncovered reads %llu, relocatable %llu; vertex-fetch stages now relocatable %llu, with an untraced decode read %llu, traced but no relocatable word left %llu\n", (unsigned long long)n, (unsigned long long)decodeOnly.load(), (unsigned long long)fetchOnly.load(), (unsigned long long)both.load(), (unsigned long long)eligibleNoBase.load(), (unsigned long long)eligibleBaseIsValue.load(), (unsigned long long)eligibleHidden.load(), (unsigned long long)eligibleCut.load(), (unsigned long long)eligibleOk.load(), (unsigned long long)bothRelocated.load(), (unsigned long long)bothUntraced.load(), (unsigned long long)bothNoWords.load());
             }
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
             tagBufferWords(*variant, stageCapture.bufferBaseWords);

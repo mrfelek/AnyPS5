@@ -1,3 +1,4 @@
+#include <atomic>
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
@@ -107,6 +108,19 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 else relocation = known->second;
                 aliasFirst = relocation != nullptr && trial.productive;
             }
+            {
+                static std::atomic<std::uint64_t> lookups{0}, unknown{0}, idle{0}, emptyWords{0}, onlyForwarded{0}, usable{0}, productive{0}, bannedTotal{0};
+                const auto n = lookups.fetch_add(1) + 1;
+                if (known == drawRelocations.end()) unknown.fetch_add(1);
+                else {
+                    bannedTotal.fetch_add(known->second->banned.size());
+                    if (relocation == nullptr) idle.fetch_add(1);
+                    else if (relocation->words.empty()) emptyWords.fetch_add(1);
+                    else if (std::all_of(relocation->words.begin(), relocation->words.end(), [](const RelocatableUserWord& w) { return w.forwarded; })) onlyForwarded.fetch_add(1);
+                    else { usable.fetch_add(1); if (aliasFirst) productive.fetch_add(1); }
+                }
+                if (n % 200000 == 0) std::fprintf(stderr, "[tmp-learn] %llu draws: identity never learned %llu, trial idle %llu, learned but empty %llu, only forwarded words %llu, usable %llu (of them trial productive %llu); banned regs per known lookup %.2f, identities known %zu\n", (unsigned long long)n, (unsigned long long)unknown.load(), (unsigned long long)idle.load(), (unsigned long long)emptyWords.load(), (unsigned long long)onlyForwarded.load(), (unsigned long long)usable.load(), (unsigned long long)productive.load(), (n - unknown.load()) ? double(bannedTotal.load()) / double(n - unknown.load()) : 0.0, drawRelocations.size());
+            }
         }
         drawKey = drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr, aliasFirst ? relocation.get() : nullptr, aliasFirst ? &drawAliases : nullptr);
         std::unique_lock cacheLock(drawCacheMutex);
@@ -136,7 +150,9 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 ++trial.lookups;
                 if (trial.lookups >= DrawRelocationTrial::Window) {
                     trial.productive = trial.hits * DrawRelocationTrial::MinimumHitShare >= trial.lookups;
-                    if (!trial.productive) trial.idle = DrawRelocationTrial::IdleDraws;
+                    static const bool neverIdle = std::getenv("APS5_RELOCATION_NEVER_IDLE") != nullptr;
+                    if (!trial.productive && !neverIdle) trial.idle = DrawRelocationTrial::IdleDraws;
+                    if (neverIdle) trial.productive = true;
                     trial.lookups = trial.hits = 0;
                 }
             }
