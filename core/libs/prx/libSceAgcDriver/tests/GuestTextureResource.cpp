@@ -663,6 +663,8 @@ void RunGuestTextureResourceTests() {
     Require(!ArrayLayersServeView(twoSlices, layered(TextureDimension::k2D, 0, 1)), "a 2D view of a later layer must not be served by the array's first layer");
     Require(ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2D, 0)), "a 2D texture must view the same 2D surface");
     Require(!ArrayLayersServeView(layered(TextureDimension::k2D, 0), twoSlices), "a 2D surface must not serve a 2D array view");
+    Require(ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2DArray, 0)), "a 2D surface must serve a one-layer 2D array view of it");
+    Require(!ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2DArray, 0, 1)), "a 2D surface must not serve a one-layer array view of a later layer");
     Require(!ArrayLayersServeView(layered(TextureDimension::k3D, 1), layered(TextureDimension::k2D, 0)), "a 3D surface's first slice must not serve a 2D texture");
     Require(!ArrayLayersServeView(layered(TextureDimension::kCube, 5), layered(TextureDimension::k2D, 0)), "a cube's first face must not serve a 2D texture");
 

@@ -9741,9 +9741,9 @@ void ResourceContentKeyTests(bool benchmark) {
             program.bindings[2].bufferWritten[0] = false;
             if (count != 0) {
                 for (auto* bits : {&program.bindings[0].imageWritten, &program.bindings[0].samplerDepthCompare, &program.bindings[0].imageDepthCompare, &program.bindings[0].imageAtomic, &program.bindings[0].samplerUnnormalized, &program.bindings[0].samplerIntegerBorder, &program.bindings[0].imageUnnormalized, &program.bindings[0].imageUnnormalizedBaseLevel}) {
-                    bits->back().flip();
+                    (*bits)[bits->size() - 1] = !bits->back();
                     Require(ShaderResources::ContentKey(shader, dataWords, movable) != original, "content key ignored the last packed flag");
-                    bits->back().flip();
+                    (*bits)[bits->size() - 1] = !bits->back();
                 }
                 ++program.bindings[0].imageSamplers.back();
                 Require(ShaderResources::ContentKey(shader, dataWords, movable) != original, "content key ignored the last sampler association");
