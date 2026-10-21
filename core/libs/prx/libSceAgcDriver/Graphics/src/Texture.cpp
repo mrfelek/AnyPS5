@@ -1790,15 +1790,17 @@ bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<c
 
 VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFormat format) const {
     Require(mip < descriptor.mipCount, "storage texture mip level is outside the texture");
-    Require(!firstLayer || descriptor.dimension == TextureDimension::k2DArray, "a first-layer storage view needs a 2D array surface");
+    Require(!firstLayer || descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k2D, "a first-layer storage view needs a 2D or 2D array surface");
     const auto viewLayerCount = firstLayer ? 1u : geometry.imageLayers - descriptor.baseArray;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.pNext = format == storageFormat ? nullptr : &usage;
     viewInfo.image = image;
-    // Storage views address one mip; cube faces are written as array layers.
-    viewInfo.viewType = firstLayer ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    // Storage views address one mip; cube faces are written as array layers. A first-layer view
+    // has the other shape of a one-layer surface: 2D over a 2D array, a one-layer array over 2D (the
+    // two share one image, see SurfaceKey).
+    viewInfo.viewType = firstLayer ? (descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D) : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, descriptor.baseArray, viewLayerCount};

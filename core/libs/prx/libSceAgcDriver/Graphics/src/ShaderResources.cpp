@@ -1041,8 +1041,24 @@ std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::li
 // Storage images are shared by every descriptor of one surface (address, extent, layers, format, tile
 // mode): the image holds the whole mip chain, and render targets in the same memory attach to it.
 std::array<std::uint32_t, 8> SurfaceKey(const Context& context, const GuestTextureResource& resource) {
-    // Guest formats that store in the same Vulkan format share the image (views carry the difference).
-    return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, (resource.depthOrLastArray << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(resource.dimension) << 20u), resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
+    // Guest formats that store in the same Vulkan format share the image (views carry the difference),
+    // and so do a 2D surface and a one-layer 2D array over it: both are one 2D image layer, viewed in
+    // the shape each binding declares (StorageViewOtherShape). Two images of one surface hand their
+    // texels to each other on every switch (StorageTexture::borrowUnits), a whole-surface copy each.
+    // APS5_NO_ONE_LAYER_SHARE=1 keeps them apart.
+    static const bool share = std::getenv("APS5_NO_ONE_LAYER_SHARE") == nullptr;
+    const auto dimension = share && resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0 && resource.baseArray == 0 ? TextureDimension::k2D : resource.dimension;
+    return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, (resource.depthOrLastArray << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(dimension) << 20u), resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
+}
+
+// Whether a storage binding views `texture` through its first-layer view (createView): the binding
+// declares the other shape of a one-layer surface than the image has, which happens when a 2D
+// surface and a one-layer 2D array over it share the image (SurfaceKey).
+bool StorageViewOtherShape(std::optional<ShaderRecompiler::DescriptorImageShape> shape, const GuestTextureResource& requested, const StorageTexture& texture) {
+    const auto surface = texture.Descriptor().dimension;
+    if (surface == TextureDimension::k2DArray) return shape.has_value() ? *shape == ShaderRecompiler::DescriptorImageShape::Image2D : requested.dimension == TextureDimension::k2D;
+    if (surface == TextureDimension::k2D) return shape.has_value() ? *shape == ShaderRecompiler::DescriptorImageShape::Image2DArray : requested.dimension == TextureDimension::k2DArray;
+    return false;
 }
 
 struct ExtendedSurfaces {
@@ -4736,7 +4752,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, written));
         storageMips.push_back(mip);
         storageKeys.push_back(resource.dccAddress);
-        storageFirstLayer.push_back(firstLayer);
+        storageFirstLayer.push_back(StorageViewOtherShape(binding.imageShape, resource, *storageTextures.back()));
         storageWritten.push_back(written);
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
         storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
@@ -5020,7 +5036,7 @@ void ShaderResources::resolveImageTables() {
                 }
                 storageMips.push_back(mip);
                 storageKeys.push_back(resource.dccAddress);
-                storageFirstLayer.push_back(firstLayer);
+                storageFirstLayer.push_back(StorageViewOtherShape(shape, resource, *storageTextures.back()));
                 storageWritten.push_back(true);
                 storageAtomic.push_back(false);
                 storageAtomic64.push_back(false);
