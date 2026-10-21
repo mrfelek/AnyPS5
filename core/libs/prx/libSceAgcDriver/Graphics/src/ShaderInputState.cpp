@@ -236,10 +236,11 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
     info.fetchEmbedded = true;
     info.fetchAttribReg = static_cast<std::uint32_t>(vertexAttribReg);
     info.fetchBufferReg = static_cast<std::uint32_t>(vertexBufferReg);
-    const auto record = [&](std::uint64_t address, std::span<const std::byte> bytes) {
+    const auto record = [&](std::uint64_t address, std::span<const std::byte> bytes, std::int32_t origin) {
         if (reads == nullptr) return;
         auto& read = reads->emplace_back();
         read.address = address;
+        read.origin = origin;
         std::copy(bytes.begin(), bytes.end(), read.data.begin());
         read.size = static_cast<std::uint32_t>(bytes.size());
     };
@@ -257,7 +258,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
         std::array<std::byte, 4> attribWordBytes{};
         const auto attribWordAddress = attribTableAddr + static_cast<std::uint64_t>(semantic.semantic) * 4u;
         AgcDriver::GuestMemory::Read(attribWordAddress, attribWordBytes, 4);
-        record(attribWordAddress, attribWordBytes);
+        record(attribWordAddress, attribWordBytes, static_cast<std::int32_t>(attribWord));
         std::uint32_t attribWord;
         std::memcpy(&attribWord, attribWordBytes.data(), 4);
         const auto index = attribWord & 0x1fu;
@@ -268,7 +269,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
         std::array<std::byte, 16> sharpBytes{};
         const auto sharpAddress = bufferTableAddr + static_cast<std::uint64_t>(index) * 16u;
         AgcDriver::GuestMemory::Read(sharpAddress, sharpBytes, 4);
-        record(sharpAddress, sharpBytes);
+        record(sharpAddress, sharpBytes, static_cast<std::int32_t>(bufferWord));
         std::array<std::uint32_t, 4> sharp{};
         std::memcpy(sharp.data(), sharpBytes.data(), 16);
         if (info.resourcesNum >= ShaderRecompiler::ShaderVertexStageInfo::MaxResources) throw std::runtime_error("AGC graphics: vertex resource count exceeds the supported domain");
