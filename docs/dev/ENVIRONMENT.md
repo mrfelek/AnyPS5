@@ -316,6 +316,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_UNREGISTERED_DROP` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | stores a storage image's pending results even when its memory is no longer registered, instead of dropping them |
 | `APS5_NO_VALIDATE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | validates every draw instead of serving the validation memo |
 | `APS5_NO_VALIDATE_SKIP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | syncs every pending write instead of skipping validation on written-element evidence |
+| `APS5_NO_VERTEX_FETCH_RELOCATION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp` |  | keeps vertex-fetch stages out of draw relocation even when every word their fetch decode read came from user data |
 | `APS5_NO_VOUCHED_VALIDATION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/VariantValidation.cpp` |  | validates a cached draw or dispatch through its per-run checks instead of its table block's vouch |
 | `APS5_NO_WAIT_OVERLAP_SUBMIT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | disables the unlocked wait that submits recorded work while overlapping writes are open |
 | `APS5_NO_WORDWISE_CAPTURE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/ShaderMemory.cpp` |  | fetches every captured page whole instead of reading pending pages word by word |
@@ -348,6 +349,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_RELEASE_ON_UNLOCK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | destroys deferred batches on the unlocking thread instead of a release thread |
 | `APS5_RELEASE_QUEUE_MAX` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` | 256 | maximum deferred batches handed to the release thread before a thread destroys its own |
 | `APS5_RELEASE_UNDER_LOCK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | destroys deferred batches in finish() under the lock instead of on a release thread |
+| `APS5_RELOCATION_NEVER_IDLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` |  | keeps the draw relocation trial running instead of going idle when it finds few hits (experiment) |
 | `APS5_RESOURCE_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 1024 | maximum entries in the per-device shader-resource cache |
 | `APS5_RESOURCE_CACHE_TABLE_ELEMENTS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 65536 | number of image-table elements the shader-resource cache keeps (0 keeps the default) |
 | `APS5_SAMPLE_THREADS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/WorkerSampler.cpp` |  | samples every thread of the process every 2 ms and writes each busy thread's hottest frames to a file (Windows only) |

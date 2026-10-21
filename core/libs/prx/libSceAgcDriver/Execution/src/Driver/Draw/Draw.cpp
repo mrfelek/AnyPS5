@@ -136,7 +136,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 ++trial.lookups;
                 if (trial.lookups >= DrawRelocationTrial::Window) {
                     trial.productive = trial.hits * DrawRelocationTrial::MinimumHitShare >= trial.lookups;
-                    if (!trial.productive) trial.idle = DrawRelocationTrial::IdleDraws;
+                    // APS5_RELOCATION_NEVER_IDLE=1 keeps the trial running however few hits it finds
+                    // (an experiment switch: with vertex-fetch relocation, Sonic Origins' menu draws
+                    // hit about half the time only once the trial stops going idle).
+                    static const bool neverIdle = std::getenv("APS5_RELOCATION_NEVER_IDLE") != nullptr;
+                    if (!trial.productive && !neverIdle) trial.idle = DrawRelocationTrial::IdleDraws;
+                    if (neverIdle) trial.productive = true;
                     trial.lookups = trial.hits = 0;
                 }
             }
