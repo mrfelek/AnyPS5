@@ -92,12 +92,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::uint64_t drawIdentity = 0;
     DrawAliasKeys drawAliases;
     std::vector<DrawUserPatch> userPatches;
+    static thread_local double tmpK[6]; static thread_local std::uint64_t tmpKn = 0; auto tmpKt = std::chrono::steady_clock::now(); auto tmpKlap = [&](int k) { const auto n = std::chrono::steady_clock::now(); tmpK[k] += std::chrono::duration<double, std::micro>(n - tmpKt).count(); tmpKt = n; };
     if (registerKey) {
         const auto keyStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         std::shared_ptr<const DrawRelocation> relocation;
         bool aliasFirst = false;
         if (drawRelocationEnabled()) {
             drawIdentity = drawIdentityKey(queue, *submission.shaders);
+            tmpKlap(0);
             std::lock_guard cacheLock(drawCacheMutex);
             learnPendingRelocation();
             drawStageDonorKeys.clear();
@@ -109,7 +111,9 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 aliasFirst = relocation != nullptr && trial.productive;
             }
         }
+        tmpKlap(1);
         drawKey = drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr, aliasFirst ? relocation.get() : nullptr, aliasFirst ? &drawAliases : nullptr);
+        tmpKlap(2);
         std::unique_lock cacheLock(drawCacheMutex);
         ++drawEntryCounters.lookups;
         ++drawEntryCounters.registerKeyLookups;
@@ -174,6 +178,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         decode = nullptr;
     }
     if (dataEntry != nullptr && !DecodeProgramsCurrent(*dataEntry->decode, *submission.shaders)) dataEntry = nullptr;
+    if (registerKey) { tmpKlap(3); if (++tmpKn % 200000 == 0) std::fprintf(stderr, "[tmp-key] per draw (thread avg over %llu): identity %.2f us, relocation lookup+learn %.2f, register key build %.2f, cache find + relocate + data shape %.2f\n", (unsigned long long)tmpKn, tmpK[0] / tmpKn, tmpK[1] / tmpKn, tmpK[2] / tmpKn, tmpK[3] / tmpKn); }
     phaseTiming.Phase(DrawRowKeyLookupValidate);
 
     if (dataEntry != nullptr) {
