@@ -177,7 +177,24 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
             for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
-            tagVariantRuns(*variant, regions, stageCapture.userDataUse, decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0), programs[i].hiddenUserWords, stageCapture.supplied);
+            // A vertex-fetch stage relocates too when every word its fetch decode read (the attribute
+            // table word, the V# words) came from a user-data word: those words become base words of
+            // the relocation, so a draw that moves only its vertex buffers reuses the cached stage.
+            // APS5_NO_VERTEX_FETCH_RELOCATION=1 keeps such stages out of relocation.
+            static const bool relocateFetch = std::getenv("APS5_NO_VERTEX_FETCH_RELOCATION") == nullptr;
+            bool eligible = decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0);
+            const auto* use = &stageCapture.userDataUse;
+            ShaderRecompiler::SrtUserDataUse widened;
+            if (relocateFetch && !eligible && !decodeReads[i].empty() && std::all_of(decodeReads[i].begin(), decodeReads[i].end(), [](const Graphics::DecodeRead& read) { return read.origin >= 0 && read.origin < 64; })) {
+                widened = stageCapture.userDataUse;
+                for (const auto& read : decodeReads[i]) {
+                    widened.asBase |= std::uint64_t{1} << read.origin;
+                    for (std::uint32_t at = 0; at < read.size; at += sizeof(std::uint32_t)) widened.reads.emplace_back(read.address + at, read.origin);
+                }
+                use = &widened;
+                eligible = true;
+            }
+            tagVariantRuns(*variant, regions, *use, eligible, programs[i].hiddenUserWords, stageCapture.supplied);
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
             tagBufferWords(*variant, stageCapture.bufferBaseWords);
             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {
