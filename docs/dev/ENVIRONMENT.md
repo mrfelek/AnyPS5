@@ -264,6 +264,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_LOCK_PROFILE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | turns off GpuMutex wait profiling under APS5_PROFILE_DRAW |
 | `APS5_NO_MOVED_BUFFER_TEMPLATES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | keys the full descriptor words of read-only guest buffers instead of allowing a hit when they move |
 | `APS5_NO_OBSERVATION_GUARD` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | observes every validated range, not only the ranges whose flush hook waited |
+| `APS5_NO_ONE_LAYER_SHARE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestTextureResource.cpp` |  | keeps a 2D surface and a one-layer 2D array over it as two storage images instead of one |
 | `APS5_NO_OPPORTUNISTIC_REAP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | skips retiring already-finished batches before a submit |
 | `APS5_NO_OWN_IMAGE_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | lets a Pending failure of the fast proof take the full walk instead of the own-object refresh |
 | `APS5_NO_PARALLEL_MIRROR_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | disables the mirror-refresh thread pool, so mirror refreshes run on the calling thread |
