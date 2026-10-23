@@ -448,6 +448,7 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+    std::int32_t instanceInputSgpr = -1;
 };
 
 struct RecompileRequest {
