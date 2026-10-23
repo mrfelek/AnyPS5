@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -14,13 +15,13 @@ import progress_history
 OPCODES = Path("core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp")
 
 
-def commit(root, day, message, body):
+def commit(root, day, message, body, time="12:00:00Z"):
     library = root / "core/libs/prx/libSceExample"
     library.mkdir(parents=True, exist_ok=True)
-    (library / "Export.cpp").write_text(body)
+    (library / "Export.cpp").write_text(body, encoding="utf-8")
     (root / OPCODES).parent.mkdir(parents=True, exist_ok=True)
-    (root / OPCODES).write_text("enum class RdnaOpcode : int {\n    SEndpgm,\n};\n")
-    env = {**os.environ, "GIT_AUTHOR_DATE": f"{day}T12:00:00Z", "GIT_COMMITTER_DATE": f"{day}T12:00:00Z"}
+    (root / OPCODES).write_text("enum class RdnaOpcode : int {\n    SEndpgm,\n};\n", encoding="utf-8")
+    env = {**os.environ, "GIT_AUTHOR_DATE": f"{day}T{time}", "GIT_COMMITTER_DATE": f"{day}T{time}"}
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message],
                    check=True, env=env)
@@ -98,6 +99,17 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("<svg", html)
         self.assertIn("2026-01-02", html)
 
+    def test_days_are_utc_whatever_the_committer_offset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-02", "older", "int APS5_VABI A() { return 0; }\n", "08:00:00+13:00")
+            commit(root, "2026-01-01", "newer", "int APS5_VABI A() { return 0; }\nint APS5_VABI B() { return 0; }\n",
+                   "21:30:00+02:00")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                points = progress_history.collect("HEAD")
+        self.assertEqual([(p["date"], p["libraries"]["total"]) for p in points], [("2026-01-01", 2)])
+
     def test_long_series_keeps_the_chart_readable(self):
         def series(count):
             start = date(2026, 1, 1).toordinal()
@@ -128,6 +140,21 @@ class ProgressHistoryTests(unittest.TestCase):
         svg = progress_history.chart(points)
         for label in ("Aug 3", "Aug 10", "Aug 17", "Aug 24", "Aug 31"):
             self.assertIn(f">{label}<", svg)
+
+    def test_main_writes_utf8_output_files(self):
+        point = {"date": "2026-01-01", "commit": "abc1234",
+                 "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 3, "total": 4, "percent": 75.0}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            with patch.object(progress_history, "collect", return_value=[point]):
+                progress_history.main([str(output)])
+            svg = (output / "history.svg").read_text(encoding="utf-8")
+            self.assertIn("\u25cf", svg)
+            html = (output / "history.html").read_text(encoding="utf-8")
+            self.assertIn("<!DOCTYPE html>", html)
+            data = json.loads((output / "history.json").read_text(encoding="utf-8"))
+            self.assertEqual(data, [point])
 
 
 

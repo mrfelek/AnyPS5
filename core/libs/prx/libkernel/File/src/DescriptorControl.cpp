@@ -3,6 +3,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FileLock.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -93,6 +94,8 @@ constexpr std::uint32_t KeepOnExecRequest = 0x20006602;
 constexpr std::uint32_t NonblockingRequest = 0x8004667e;
 constexpr std::uint32_t ReadableRequest = 0x4004667f;
 constexpr std::uint32_t RequestIn = 0x80000000u;
+constexpr std::uint32_t RequestOut = 0x40000000u;
+constexpr std::uint32_t RequestVoid = 0x20000000u;
 constexpr std::uint32_t TerminalGroup = 't';
 
 struct GuestLock {
@@ -510,7 +513,16 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
     }
 }
 
+bool IoctlRequestMalformed(std::uint64_t request) {
+    const auto command = static_cast<std::uint32_t>(request);
+    const std::uint32_t length = (command >> 16) & 0x1fff;
+    if ((command & (RequestIn | RequestOut | RequestVoid)) == 0) return true;
+    if ((command & RequestOut) && length == 0) return true;
+    return (command & RequestVoid) && length != 0 && length != sizeof(int);
+}
+
 int Ioctl(int fd, std::uint64_t request, void* argument) {
+    if (IoctlRequestMalformed(request)) return Fail(GuestEnotty);
     const auto command = static_cast<std::uint32_t>(request);
     const std::uint32_t length = (command >> 16) & 0x1fff;
     if ((command & RequestIn) && length != 0 && argument == nullptr) return Fail(GuestEfault);
@@ -572,6 +584,16 @@ bool Appends(int fd) {
     return found != g_entries.end() && found->second.status && (*found->second.status & Append) != 0;
 }
 
+bool IsCharacterDevice(int fd) {
+    if (fd < 0) return false;
+#ifdef _WIN32
+    return DescriptorIsOpen_nid_no_patch(fd) && !GuestSockets::IsOpen(fd) && !File::DirectoryDescriptorPath(fd) && ::GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_CHAR;
+#else
+    struct stat status{};
+    return ::fstat(fd, &status) == 0 && S_ISCHR(status.st_mode);
+#endif
+}
+
 bool IsVnode(int fd) {
     if (fd < 0 || File::IsRandomDevice(fd)) return false;
     if (File::IsArchivedFile(fd)) return true;
@@ -584,4 +606,8 @@ bool IsVnode(int fd) {
 #endif
 }
 
+}
+
+extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
+    return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
 }

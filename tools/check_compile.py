@@ -12,12 +12,25 @@ from pathlib import Path
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP")
-DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MJ")
+DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 
 
-def capture(command, cwd=None):
-    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+def capture(command, cwd=None, encoding="utf-8"):
+    return subprocess.run(command, capture_output=True, text=True, encoding=encoding,
                           errors="replace", cwd=cwd)
+
+
+def ninja_encoding(ninja):
+    if sys.platform != "win32":
+        return "utf-8"
+    result = capture([ninja, "-t", "wincodepage"])
+    if result.returncode != 0:
+        raise ValueError(f"ninja -t wincodepage: {result.stderr.strip() or result.stdout.strip()}")
+    declared = result.stdout.strip()
+    encodings = {"Build file encoding: UTF-8": "utf-8", "Build file encoding: ANSI": "mbcs"}
+    if declared not in encodings:
+        raise ValueError(f"unsupported Ninja build-file encoding: {declared!r}")
+    return encodings[declared]
 
 
 def repository():
@@ -32,11 +45,11 @@ def entries(build):
         raise ValueError(f"{build} is not a directory; configure the build first")
     manifest = build / "compile_commands.json"
     if manifest.is_file():
-        return json.loads(manifest.read_text(encoding="utf-8"))
+        return json.loads(manifest.read_text(encoding="utf-8-sig"))
     ninja = shutil.which("ninja")
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")
-    result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"])
+    result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"], encoding=ninja_encoding(ninja))
     if result.returncode != 0:
         raise ValueError(f"ninja -t compdb: {result.stderr.strip()}")
     return json.loads(result.stdout)
@@ -105,6 +118,9 @@ def syntax_only(entry, source):
 def syntax_arguments(arguments, directory, source):
     if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
         raise ValueError("arguments must be a nonempty list of strings with an executable")
+    for argument in arguments[1:]:
+        if argument.startswith("@"):
+            raise ValueError(f"unexpanded response file {argument[1:]}; provide expanded compile arguments before checking syntax")
     wanted = source.resolve()
     trimmed = []
     index = 0
@@ -113,7 +129,7 @@ def syntax_arguments(arguments, directory, source):
         if argument in DROP_WITH_VALUE:
             index += 2
             continue
-        if argument in DROP or argument.startswith("-MJ"):
+        if argument in DROP or argument.startswith(("-MT", "-MF", "-MQ", "-MJ")):
             index += 1
             continue
         if not argument.startswith("-"):
@@ -153,7 +169,10 @@ def check(root, build, files, jobs=1):
     tasks = []
     for file in files:
         source = file.resolve()
-        name = os.path.relpath(source, root).replace(os.sep, "/")
+        try:
+            name = source.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            name = source.as_posix()
         tasks.append((source, name, build, commands.get(name)))
     checked = failed = 0
     with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:

@@ -1,3 +1,4 @@
+import contextlib
 import io
 import sys
 import tempfile
@@ -25,6 +26,10 @@ static std::size_t m = environmentCount("APS5_PM4_RING", 16, MaximumCapacity, "A
 static int n = GetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", skip, 2);
 static const auto* o = addWideString(u"ANYPS5_LOADEXEC_PARENT");
 static unsigned long p = reconfigured("APS5_NOT_A_READ", 1);
+static bool q = _wgetenv(L"APS5_WIDE_PRESENT") != nullptr;
+static int r = _wtoi(_wgetenv(L"APS5_WIDE_INT"));
+static const wchar_t* s = _wgetenv(L"ANYPS5_WIDE_CONFIG");
+static const char* t = std::getenv("NOT_AN_ENV");
 """
 
 
@@ -46,7 +51,8 @@ class EnvReferenceTests(unittest.TestCase):
              "APS5_WORKER_AFFINITY_MASK", "ANYPS5_GPU", "APS5_THREAD_NICE",
              "APS5_CRASH_INDIRECT_MEMORY", "APS5_PIPELINE_JOURNAL_MAX_MIB",
              "APS5_PIPELINE_STORE_ENTRIES", "APS5_PIPELINE_JOURNAL_THREADS", "APS5_PM4_RING",
-             "ANYPS5_LOADEXEC_ARGV_SKIP", "ANYPS5_LOADEXEC_PARENT"})
+             "ANYPS5_LOADEXEC_ARGV_SKIP", "ANYPS5_LOADEXEC_PARENT",
+             "ANYPS5_WIDE_CONFIG", "APS5_WIDE_PRESENT", "APS5_WIDE_INT"})
         self.assertEqual(found["APS5_PROFILE_DRAW"][0][1], 1)
         self.assertEqual(found["APS5_THREAD_NICE"][0][2:], ("integer", "-10"))
         self.assertEqual(found["APS5_HOST_IMPORT_MIB"][0][2:], ("integer", "6144"))
@@ -56,6 +62,54 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_PM4_RING"][0][2:], ("integer", "16"))
         self.assertEqual(found["ANYPS5_LOADEXEC_ARGV_SKIP"][0][2:], ("string", ""))
         self.assertEqual(found["ANYPS5_LOADEXEC_PARENT"][0][2:], ("string", ""))
+        self.assertEqual(found["ANYPS5_WIDE_CONFIG"][0][2:], ("string", ""))
+        self.assertEqual(found["APS5_WIDE_PRESENT"][0][2:], ("presence", ""))
+        self.assertEqual(found["APS5_WIDE_INT"][0][2:], ("integer", ""))
+
+    def test_reads_environmental_variable_with_multiline_getenv(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text(
+            'static const char* value = std::getenv(\n'
+            '    "APS5_MULTILINE");\n',
+            encoding="utf-8"
+        )
+
+        found = env_reference.reads([root / "core"])
+        self.assertIn("APS5_MULTILINE", found)
+
+    def test_multiline_reads_keep_line_numbers_and_do_not_duplicate(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text(
+            'auto a = std::getenv("APS5_SINGLE");\n'
+            'auto b = std::getenv(\n'
+            '    "APS5_MULTI");\n'
+            'auto c = EnvInt(\n'
+            '\n'
+            '    "APS5_INT", 42);\n'
+            'auto d = std::getenv("APS5_SINGLE");\n',
+            encoding="utf-8"
+        )
+
+        found = env_reference.reads([root / "core"])
+
+        self.assertEqual(
+            set(found),
+            {"APS5_SINGLE", "APS5_MULTI", "APS5_INT"}
+        )
+        self.assertEqual(
+            [site[1] for site in found["APS5_SINGLE"]], [1, 7]
+        )
+        self.assertEqual(
+            [site[1] for site in found["APS5_MULTI"]], [2]
+        )
+        self.assertEqual(
+            [site[1] for site in found["APS5_INT"]], [4]
+        )
+        self.assertEqual(
+            found["APS5_INT"][0][2:], ("integer", "42")
+        )
 
     def test_the_default_prefixes_cover_both(self):
         root = self.fixture()
@@ -100,6 +154,26 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(
             env_reference.check(found, root / "missing.md", env_reference.PREFIXES, out), 1)
         self.assertIn("cannot read", out.getvalue())
+
+    def test_ancestor_directory_named_in_skip_does_not_suppress_root_scan(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        core = Path(directory.name) / "build" / "checkout" / "core"
+        (core / "3rdparty").mkdir(parents=True)
+        (core / "Sample.cpp").write_text('static bool a = IsEnvironmentSet("APS5_TRACE_GPU");\n', encoding="utf-8")
+        (core / "3rdparty" / "Ignored.cpp").write_text('static bool b = IsEnvironmentSet("APS5_IGNORED");\n', encoding="utf-8")
+        self.assertEqual(set(env_reference.reads([core], BOTH)), {"APS5_TRACE_GPU"})
+
+    def test_main_rejects_a_scan_root_that_is_not_a_directory(self):
+        root = self.fixture()
+        for name in ("missing", "core/Sample.cpp"):
+            for flags in (["--check"], ["--table"], []):
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(err):
+                    code = env_reference.main(flags + ["--doc", str(root / "ENVIRONMENT.md"), "--root", str(root / name)])
+                self.assertEqual(code, 1, (name, flags))
+                self.assertIn("is not a directory", err.getvalue())
+                self.assertNotIn("no longer reads", out.getvalue())
 
 
 if __name__ == "__main__":

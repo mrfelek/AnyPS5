@@ -68,6 +68,8 @@ struct ColorTarget {
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
     std::uint32_t dccControl = 0;
+    std::uint64_t fmaskAddress = 0;
+    std::uint32_t fmaskPipeBankXor = 0;
 };
 
 struct DepthTarget {
@@ -140,9 +142,11 @@ struct State {
     bool ditheredAlphaToCoverage = false;
     bool perSampleShading = false;
     bool mergedCoverage = false;
+    bool truncatedCoverage = false;
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
+    VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
     VkFrontFace frontFace;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
@@ -152,6 +156,10 @@ struct State {
     bool customSampleLocations = false;
     bool sampleLocationGrid = false;
     std::uint32_t paClVsOutCntl = 0;
+    bool vertexPoints = false;
+    float pointSize = 1.0f;
+    float pointSizeMin = 0.0f;
+    float pointSizeMax = 0.0f;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool pixelEarlyZ = false;
 };
@@ -161,12 +169,21 @@ struct State {
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
 
 ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = false);
+void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 VkExtent2D SampleLocationGrid(const State& state);
+using SampleOrder = std::array<std::uint32_t, 4>;
+inline constexpr std::uint32_t KeptSampleOrder = 0x76543210u;
+std::optional<SampleOrder> SameSetSampleOrder(const State& state);
+bool ReordersSamples(const SampleOrder& order);
+std::uint32_t InvertSampleOrder(std::uint32_t order);
+std::uint32_t HostSampleBits(std::uint32_t guestBits, std::uint32_t order);
+bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
+std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
@@ -192,6 +209,14 @@ struct ColorMetadataPass {
     std::optional<ColorTarget> source;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+struct DepthCopyPass {
+    std::uint64_t depthAddress;
+    VkExtent2D extent;
+    std::uint32_t samples;
+    std::uint32_t sample;
+    ColorTarget color;
+};
+std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
 bool DepthResummarizeDrawsNothing(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules

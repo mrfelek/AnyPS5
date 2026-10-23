@@ -43,7 +43,7 @@ RECORD_SIZE = 0x20
 RECORD_HAS_SEGMENT = 0x800
 RECORD_SEGMENT_SHIFT = 20
 FIRST_REGION = 0x400
-MAX_EMPTY_LOAD_PADDING = 64 * 1024 * 1024
+MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
 PT_LOAD = 1
 PT_NOTE = 4
 ENTROPY_LIMIT = 7.5
@@ -95,12 +95,6 @@ def read_records(data):
     return records
 
 
-def align_up(value, alignment):
-    if alignment <= 1:
-        return value
-    return (value + alignment - 1) // alignment * alignment
-
-
 def parse_elf(data):
     inner = data.find(b"\x7fELF")
     if inner < 0:
@@ -108,11 +102,15 @@ def parse_elf(data):
     if inner + 0x40 > len(data):
         raise Refused("inner ELF header is truncated")
     header = bytearray(data[inner:inner + 0x40])
+    if header[4] != 2 or header[5] != 1:
+        raise Refused("inner ELF is not 64-bit little-endian")
     program_offset = struct.unpack_from("<Q", header, 0x20)[0]
     entry_size = struct.unpack_from("<H", header, 0x36)[0]
     count = struct.unpack_from("<H", header, 0x38)[0]
     if entry_size != 56 or count == 0:
         raise Refused("program header table is %d entries of %d bytes" % (count, entry_size))
+    if program_offset < len(header):
+        raise Refused("ELF program header table overlaps the ELF header")
     if inner + program_offset + count * entry_size > len(data):
         raise Refused("ELF program header table does not fit the file")
     headers = []
@@ -200,6 +198,9 @@ def place_segments(data, headers, records):
             if header["size"] and (offset > host["size"] or header["size"] > host["size"] - offset):
                 raise Refused("segment %d does not fit the file-backed range of PT_LOAD %d"
                               % (header["index"], host["index"]))
+            if host["size"] == 0 or offset > host["size"]:
+                header["source"] = 0
+                continue
             header["host"] = host
             header["source"] = host["source"] + offset
             if tail is None or header["offset"] > tail[0]:
@@ -250,10 +251,13 @@ def unwrap(path, output, verbose=False):
     check_decrypted(data, headers)
 
     regions = []
+    load_regions = {}
     for header in headers:
         if header["type"] == PT_LOAD and header["size"]:
-            regions.append({"old": header["source"], "size": header["size"],
-                            "vaddr": header["vaddr"], "align": header["align"]})
+            region = {"old": header["source"], "size": header["size"],
+                      "vaddr": header["vaddr"], "align": header["align"]}
+            regions.append(region)
+            load_regions[header["index"]] = region
 
     def region_for(offset, size):
         for region in regions:
@@ -265,16 +269,17 @@ def unwrap(path, output, verbose=False):
         if header["type"] == PT_LOAD or header["size"] == 0:
             continue
         if region_for(header["source"], header["size"]) is None:
-            regions.append({"old": header["source"], "size": header["size"], "vaddr": 0, "align": 1})
+            regions.append({"old": header["source"], "size": header["size"],
+                            "vaddr": header["vaddr"], "align": header["align"]})
 
     regions.sort(key=lambda region: region["old"])
     program_offset = struct.unpack_from("<Q", elf_header, 0x20)[0]
     cursor = max(FIRST_REGION, program_offset + len(headers) * 56)
+    padding = 0
     for region in regions:
         alignment = region["align"] if region["align"] and (region["align"] & (region["align"] - 1)) == 0 else 1
-        placed = align_up(cursor, alignment)
-        if region["vaddr"] % alignment != placed % alignment:
-            placed += (region["vaddr"] % alignment - placed % alignment) % alignment
+        placed = cursor + (region["vaddr"] - cursor) % alignment
+        padding += placed - cursor
         region["new"] = placed
         cursor = placed + region["size"]
 
@@ -282,8 +287,9 @@ def unwrap(path, output, verbose=False):
     for header in headers:
         if header["type"] == PT_LOAD and header["size"] == 0:
             empty_end = max(empty_end, header["vaddr"] % max(header["align"], 1))
-    if empty_end - cursor > MAX_EMPTY_LOAD_PADDING:
-        raise Refused("empty load alignment requires more than %d bytes of output padding" % MAX_EMPTY_LOAD_PADDING)
+    padding += empty_end - cursor
+    if padding > MAX_ALIGNMENT_PADDING:
+        raise Refused("segment alignment requires more than %d bytes of output padding" % MAX_ALIGNMENT_PADDING)
     cursor = empty_end
 
     result = bytearray(cursor)
@@ -294,7 +300,10 @@ def unwrap(path, output, verbose=False):
         if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):
             header["new"] = header["vaddr"] % max(header["align"], 1) if header["type"] == PT_LOAD else 0
             continue
-        region = region_for(header["source"], header["size"])
+        host = header if header["type"] == PT_LOAD else header["host"]
+        region = load_regions.get(host["index"]) if host is not None else None
+        if region is None:
+            region = region_for(header["source"], header["size"])
         header["new"] = header["source"] if region is None else region["new"] + (header["source"] - region["old"])
         if header["new"] + header["size"] > len(result):
             raise Refused("segment %d escaped the output" % header["index"])
@@ -324,12 +333,15 @@ def unwrap(path, output, verbose=False):
     return len(result)
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="unwrap a decrypted SELF or fSELF container into a clean ELF")
     parser.add_argument("input", help="SELF container to read")
     parser.add_argument("output", help="ELF executable to write")
     parser.add_argument("--verbose", action="store_true", help="print the program header mapping")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     try:
         size = unwrap(arguments.input, arguments.output, arguments.verbose)
     except Refused as error:
@@ -343,6 +355,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
     sys.exit(main())

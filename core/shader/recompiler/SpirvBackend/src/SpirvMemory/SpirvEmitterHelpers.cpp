@@ -218,13 +218,18 @@ void DefineInputs(SpirvEmitterState& state) {
         const auto reads = [&](StageInputKind kind) {
             return std::any_of(state.inputs.begin(), state.inputs.end(), [&](const SpirvInputBinding& input) { return input.kind == kind; });
         };
-        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective)}, state.meshBarycentricPixel);
+        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective), state.program.Info().smoothOffsetBarycentrics}, state.meshBarycentricPixel);
         if (state.meshBarycentricPixel && emulation.positionsLocation != BarycentricEmulationLayout::NoLocation) {
             state.pixelFlatPositions = DefineInterfaceVariable(state, state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u)), spv::StorageClassInput, "meshBarycentricPositions");
             state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationLocation, emulation.positionsLocation);
             state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationPerPrimitiveEXT);
             state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
             state.module.EmitExtension("SPV_EXT_mesh_shader");
+        }
+        if (emulation.reciprocalWLocation != BarycentricEmulationLayout::NoLocation) {
+            state.barycentricReciprocalWVariable = DefineInterfaceVariable(state, TypeF32Vector(state, 3u), spv::StorageClassInput, "gl_BarycentricReciprocalW");
+            state.module.AddAnnotation(spv::OpDecorate, state.barycentricReciprocalWVariable, spv::DecorationNoPerspective);
+            state.module.AddAnnotation(spv::OpDecorate, state.barycentricReciprocalWVariable, spv::DecorationLocation, emulation.reciprocalWLocation);
         }
     }
     for (auto& input : state.inputs) {
@@ -419,7 +424,7 @@ void DefineOutputs(SpirvEmitterState& state) {
         case StageOutputKind::StencilRef:
             if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
                 const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
-                if (values.empty()) throw std::runtime_error("stencil reference export emulation requires a proven set of at most 16 values");
+                if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
                 if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
                 if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
                 state.stencilReplay = true;
@@ -479,7 +484,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::Buffers:
             state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
             if (state.requirements.coherentBufferAlias) state.storageBufferCoherentVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers_coherent");
-            if (state.requirements.bufferInt64Atomics) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
+            if (state.requirements.bufferU64View) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
             if (state.storageBufferU64Variable != 0u || state.storageBufferCoherentVariable != 0u) {
                 for (const auto variable : {state.storageBufferVariable, state.storageBufferCoherentVariable, state.storageBufferU64Variable}) {
                     if (variable != 0u) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);

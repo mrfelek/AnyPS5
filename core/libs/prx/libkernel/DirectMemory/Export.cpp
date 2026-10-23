@@ -221,7 +221,8 @@ int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t s
  if (!phys_addr_out || !size_out) return SCE_KERNEL_ERROR_EINVAL;
  int64_t start = 0;
  size_t size = 0;
- if (!DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size)) { *phys_addr_out = 0; *size_out = 0; return SCE_KERNEL_ERROR_EAGAIN; }
+ const int result = DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size);
+ if (result != 0) { *phys_addr_out = 0; *size_out = 0; return result; }
  *phys_addr_out = start;
  *size_out = size;
  return 0;
@@ -464,10 +465,9 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
  return 0;
 }
 
-int APS5_VABI sceKernelInternalMemoryGetAvailableSize(size_t* size) {
- if (!size) return SCE_KERNEL_ERROR_EINVAL;
- *size = 0;
- return 0;
+int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
+ if (!size) return -1;
+ throw std::logic_error("sceKernelInternalMemoryGetAvailableSize: internal pool statistics are not implemented");
 }
 
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
