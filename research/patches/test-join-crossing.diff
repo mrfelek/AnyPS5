@@ -1,0 +1,13 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+index db0d8b761..76d278601 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+@@ -1366,6 +1366,8 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
+     if (run.ranges.empty()) return run;
+     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
+     if (begin == run.base && end == run.base + run.bytes) return run;
++    static const bool testJoinCrossing = std::getenv("APS5_TEST_JOIN_CROSSING") != nullptr;
++    if (testJoinCrossing) return run;
+     return {};
+ }
+ 

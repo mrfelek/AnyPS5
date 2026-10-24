@@ -1,0 +1,13 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp
+index 5f4a53f17..6e48bb401 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp
+@@ -2312,7 +2312,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer)
+     static const bool traceUpload = std::getenv("APS5_TRACE_UPLOAD") != nullptr;
+     if (traceUpload) {
+         const auto keys = TextureClearKeys(descriptor, guestBytes);
+-        std::fprintf(stderr, "[upload] 0x%llx+0x%llx %ux%u mips %u: %s (keys %s -> %s, originalValid %d, dirty %d)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.width, descriptor.height, descriptor.mipCount, keys != uploadedKeys ? "DCC keys changed" : "guest memory changed", DccKeysName(uploadedKeys), DccKeysName(keys), originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) ? 1 : 0, dirty ? 1 : 0);
++        std::fprintf(stderr, "[upload] 0x%llx+0x%llx %ux%u mips %u layers %u..%u dim %d fmt %u tile %d obj %p: %s (keys %s -> %s, originalValid %d, dirty %d)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.width, descriptor.height, descriptor.mipCount, descriptor.baseArray, descriptor.depthOrLastArray, static_cast<int>(descriptor.dimension), descriptor.format, static_cast<int>(descriptor.tileMode), static_cast<const void*>(this), keys != uploadedKeys ? "DCC keys changed" : "guest memory changed", DccKeysName(uploadedKeys), DccKeysName(keys), originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) ? 1 : 0, dirty ? 1 : 0);
+     }
+     // Changed layers with results pending: the CPU wrote this memory while GPU results were
+     // pending, so as with an immediate write-back followed by the CPU write, its blocks win and the

@@ -1,0 +1,46 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
+index 146b038eb..f32971adc 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
+@@ -1,3 +1,4 @@
++#include <unordered_set>
+ #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
+@@ -2210,7 +2211,22 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
+     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
+     // continued draw lies inside its pass's range).
+-    const auto drawTiming = !continued ? recorder->BeginGpuTiming(CommandClass::Draw) : Recorder::NoTiming;
++    // TEST-ONLY diag (GPU time thread): key the pass range by its first draw's fragment variant so
++    // [gputime] "by program" lists draw passes; print each new key's target once.
++    std::uint64_t passTimingKey = Recorder::ClassKey(CommandClass::Draw);
++    if (!continued && Recorder::GpuTimingEnabled()) {
++        const auto fragmentStage = std::ranges::find_if(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment; });
++        const std::uint64_t variant = fragmentStage != shaders.end() && fragmentStage->program != nullptr ? fragmentStage->program->variantId : 0;
++        passTimingKey = 0xd000000000000000ull | (variant & 0x0fffffffffffffffull);
++        static std::mutex seenMutex;
++        static std::unordered_set<std::uint64_t> seen;
++        std::lock_guard seenLock(seenMutex);
++        if (seen.insert(passTimingKey).second) {
++            const auto* first = record.targets.empty() ? nullptr : record.targets.front().get();
++            std::fprintf(stderr, "[passkey] 0x%llx targets %zu first 0x%llx %ux%u fmt %u depth %d ms %zu stages %zu\n", static_cast<unsigned long long>(passTimingKey), record.targets.size(), first ? static_cast<unsigned long long>(first->Descriptor().baseAddress) : 0ull, first ? first->Descriptor().width : 0u, first ? first->Descriptor().height : 0u, first ? first->Descriptor().format : 0u, state.depth.has_value() ? 1 : 0, record.multisampleImages.size(), shaders.size());
++        }
++    }
++    const auto drawTiming = !continued ? recorder->BeginGpuTiming(passTimingKey) : Recorder::NoTiming;
+     if (!continued && Recorder::BarrierValidate()) {
+         auto reads = resources.InPlaceReads();
+         reads.insert(reads.end(), inputs.inPlaceReads.begin(), inputs.inPlaceReads.end());
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp
+index 63948985f..9aeb6db3c 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp
+@@ -2670,7 +2670,7 @@ void Recorder::readGpuTiming(Batch& batch) {
+     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
+     // The first field stays the program sum: the measure scripts match on it.
+     AgcDriver::ProfilePrint_nid_no_patch("[gputime] %.0f ms of GPU time in %llu batches over 10 s (batch %.0f ms first to last command; classes %.0f ms, all ranges %.0f ms, untimed %.0f ms outside every range; %llu presents; %llu ranges dropped at the %u cap); by program:", timingProgramMs, static_cast<unsigned long long>(timingBatches), timingBatchMs, timingClassMs, timingUnionMs, timingBatchMs - timingUnionMs, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(timingDropped.exchange(0, std::memory_order_relaxed)), MaxTimedRanges);
+-    for (std::size_t i = 0; i < hot.size() && i < 12; ++i) AgcDriver::ProfilePrint_nid_no_patch(" 0x%llx x%llu %.0fms", static_cast<unsigned long long>(hot[i].first), static_cast<unsigned long long>(hot[i].second.count), hot[i].second.ms);
++    for (std::size_t i = 0; i < hot.size() && i < 40; ++i) AgcDriver::ProfilePrint_nid_no_patch(" 0x%llx x%llu %.0fms", static_cast<unsigned long long>(hot[i].first), static_cast<unsigned long long>(hot[i].second.count), hot[i].second.ms);
+     AgcDriver::ProfilePrint_nid_no_patch("; by class:%s\n", classes.c_str());
+     timingByKey.clear();
+     timingProgramMs = timingClassMs = timingUnionMs = timingBatchMs = 0;

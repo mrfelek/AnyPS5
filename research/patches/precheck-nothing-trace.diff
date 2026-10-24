@@ -1,0 +1,13 @@
+Test-only, do not commit. File: core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPrecheck.cpp
+Replace the line
+            if ((word(0x200) & 3u) == 0 || ((word(0x010) & 3u) == 0 && (word(0x011) & 1u) == 0)) return DrawVerdict::Nothing;
+with
+            if ((word(0x200) & 3u) == 0 || ((word(0x010) & 3u) == 0 && (word(0x011) & 1u) == 0)) {
+                static const bool traceNothing = std::getenv("APS5_HW_TRACE_NOTHING") != nullptr;
+                static const bool keepNothing = std::getenv("APS5_HW_KEEP_NOTHING") != nullptr;
+                const auto sh = [&](std::uint32_t offset) { const auto it = queue.shader.find(offset); return it == queue.shader.end() ? 0u : it->second; };
+                if (traceNothing) std::fprintf(stderr, "[hwnothing] %s indirect %d args 0x%llx sh08 %08x sh48 %08x sh49 %08x sh88 %08x sh89 %08x shc8 %08x shc9 %08x sh108 %08x ctx8e %08x ctx8f %08x ctx200 %08x ctx010 %08x ctx011 %08x keep %d\n", Pm4::Name(packet[0]).c_str(), drawParameters.indirect ? 1 : 0, static_cast<unsigned long long>(drawParameters.indirect ? drawParameters.indirect->arguments : 0), sh(0x8), sh(0x48), sh(0x49), sh(0x88), sh(0x89), sh(0xc8), sh(0xc9), sh(0x108), word(0x8e), word(0x8f), word(0x200), word(0x010), word(0x011), keepNothing ? 1 : 0);
+                if (!keepNothing) return DrawVerdict::Nothing;
+            }
+(<cstdio> may need adding next to <cstdlib> if std::fprintf is not already visible.)
+Note: SH offsets are guesses for the gfx10 program-address registers (0x8 PS lo, 0x48 VS, 0x88 GS, 0xc8 ES, 0x108 HS); if queue.shader uses another key base, print whichever keys are present instead.

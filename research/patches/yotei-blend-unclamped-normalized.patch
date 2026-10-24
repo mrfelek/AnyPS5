@@ -1,0 +1,76 @@
+From 7f6f463df02aa8ae119c16c84c55b9a2bb5384cb Mon Sep 17 00:00:00 2001
+From: mrfelek <17274927+mrfelek@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 17:54:16 +0000
+Subject: [PATCH] fix(libSceAgcDriver): blend into unclamped normalized color
+ targets through Vulkan
+
+A UNORM or SNORM color target with BLEND_CLAMP clear threw in DecodeState
+once its slot blended, which stopped PPSA26344 during its title-scene
+load. The slot now blends through Vulkan, which clamps the blend inputs
+to the normalized range first; the console clamps only the result. The
+two agree while the shader's exports stay in range, and the debt note
+records the difference.
+
+AI-assisted: yes
+
+---
+ core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp | 5 -----
+ core/libs/prx/libSceAgcDriver/tests/Graphics.cpp     | 6 ++++--
+ docs/dev/debt/libSceAgcDriver.md                     | 2 +-
+ 3 files changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp
+index 1c58ed2..8505d89 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp
+@@ -1584,11 +1584,6 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
+             Require(addition(state.colorBlendOp) && addition(state.alphaBlendOp), "dual-source blending with a MIN or MAX operation is unsupported");
+             result.dualSourceBlend = true;
+         }
+-        if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {
+-            char detail[80];
+-            std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
+-            throw std::runtime_error(std::string("AGC graphics: blending unclamped normalized color is not implemented") + detail);
+-        }
+         result.blends[color.exportIndex] = state;
+     }
+     for (std::uint32_t i = 0; i < 3; ++i) {
+diff --git a/core/libs/prx/libSceAgcDriver/tests/Graphics.cpp b/core/libs/prx/libSceAgcDriver/tests/Graphics.cpp
+index ac6fb3c..e9dbbc7 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/Graphics.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/Graphics.cpp
+@@ -1651,14 +1651,16 @@ void UnclampedNormalizedColorTests() {
+     const auto pass = AgcDriver::Graphics::DecodeColorMetadataPass(eliminate);
+     Require(pass.has_value() && pass->mode == AgcDriver::Graphics::ColorMetadataPass::Mode::EliminateFastClear && pass->targets.size() == 1 && pass->targets[0].format == VK_FORMAT_R8G8_UNORM, "a fast-clear eliminate over an unclamped UNORM target was refused");
+     queue.context[0x1e0] = blending;
+-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504)");
++    state = DecodeState(queue);
++    Require(state.blends.at(0).blendEnable && state.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA && state.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, "a blended 8_8 UNORM target with BLEND_CLAMP clear (CB_COLOR_INFO 0x0000000c, PPSA26344) was refused or lost its blend");
++    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a blended unclamped UNORM target");
+     queue.context[0x31c] |= 0x10000u;
+     state = DecodeState(queue);
+     Require(!state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "an unclamped UNORM target with BLEND_BYPASS was refused or blended");
+     queue = target(0x0000010cu);
+     Require(DecodeState(queue).colors.at(0).format == VK_FORMAT_R8G8_SNORM, "an unclamped SNORM target that does not blend was refused");
+     queue.context[0x1e0] = blending;
+-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented");
++    Require(DecodeState(queue).blends.at(0).blendEnable, "a blended unclamped SNORM target was refused");
+     queue = target(0x00000604u);
+     expectFailure([&] { DecodeState(queue); }, "unclamped normalized color is unsupported");
+     queue = target(0x0000800cu);
+diff --git a/docs/dev/debt/libSceAgcDriver.md b/docs/dev/debt/libSceAgcDriver.md
+index 56658c3..bc97c87 100644
+--- a/docs/dev/debt/libSceAgcDriver.md
++++ b/docs/dev/debt/libSceAgcDriver.md
+@@ -218,7 +218,7 @@
+ - [Resource cache entries holding released textures](../../../core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp) (libSceAgcDriver) - a sampled texture the texture cache drops while something else holds it, or makes without caching (`admitTexture` refusing a first use), is marked released, and `ResourceCache::Insert` refuses descriptor sets that hold one and removes the entries that do. The removal waits for the next insert: until then `Find` still returns those entries and their textures stay alive. One process-wide flag starts the sweep, so while the sampled cache is over its budget every insert scans all entries (1,024 at start, up to 16,384 after growth, or `APS5_RESOURCE_CACHE_ENTRIES`, each with its textures); that cost is not measured. When `ReleaseTextureCaches` runs on device memory exhaustion, the sampled textures these entries hold are only marked released and are freed at the next insert, so the immediate allocation retry gets no memory back from them. A draw or dispatch whose textures the cache refused builds its descriptor sets again on each use for as long as the cache stays full; the count bounds (`APS5_RESOURCE_CACHE_ENTRIES`, `APS5_RESOURCE_CACHE_TABLE_ELEMENTS`) still bound nothing by bytes, and sampled textures made outside the texture cache (the disabled cache, depth-surface copies) are never marked. Measured on one title on one RTX 4090: with the default bounds, sampled textures held outside the cache peaked at 2,836 MiB (7,830 MiB before) and device-local heap 0 stayed under its 22.9 GB budget for the whole run (26,357 MiB before, which aborted with `VK_ERROR_OUT_OF_DEVICE_MEMORY` at the wolf scene). Whether the extra descriptor-set builds cost frame time elsewhere is not measured.
+ 
+ - [Sampled MSAA surface geometry](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureTiling.cpp) supplies the fragment-aware linear size and one mip for a tiled 2D surface at two, four or eight fragments. Unsupported arrays, mip chains, extents and block sizes throw. Linear descriptors retain the existing geometry path, including its use when sampling an existing native target; a linear MSAA guest layout is not modeled. The range calculation follows AMD Addrlib's thin-block dimensions. Console layout equivalence and title effects of the additional mip metadata remain unmeasured. This does not add sample upload or readback.
+-- [Unclamped normalized color targets](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - CB_COLOR_INFO targets with BLEND_CLAMP clear (bit 15) on UNORM and SNORM formats are accepted when blending is disabled (ENABLE clear or BLEND_BYPASS set). Vulkan converts unblended shader values and clamps to the normalized range automatically; blending into an unclamped normalized target remains unmodeled because Vulkan always clamps inputs prior to blending.
++- [Unclamped normalized color targets](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - CB_COLOR_INFO targets with BLEND_CLAMP clear (bit 15) on UNORM and SNORM formats are accepted with and without blending. Vulkan converts unblended shader values and clamps to the normalized range automatically. A blended slot blends through Vulkan, which clamps the source, destination and factors to the normalized range before the blend equation, while the console with BLEND_CLAMP clear blends the unclamped shader values and clamps only the result. The two agree while the exported color and alpha stay inside the normalized range; a shader that exports values outside it blends differently, which a pixel-shader merge without the source clamp would model. PPSA26344 alpha-blends (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) into an unclamped 8_8 UNORM target during its title-scene load; whether its exports leave the range is unmeasured.
+ 
+ - [Multisample image readback](../../../core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleReadback.cpp) fetches unsigned R8/R16/R32/R32G32/R32G32B32A32 or D32 depth samples through a 2D array view in GENERAL, in layer/y/x/fragment order. The caller owns producer completion, image transitions and resource lifetimes. It implements Vulkan per-sample fetches, not guest-memory publication, metadata expansion or PS5 layout equivalence; D32 exceptional-value preservation has not been measured. Other formats, sample counts and invalid ranges throw.
+ - [Multisample image upload](../../../core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleUpload.cpp) does not model guest layouts, native ownership or CMASK/FMASK/DCC publication; console equivalence and large-title initialization costs remain unmeasured. It stores 1/2/4/8/16-byte elements from a storage buffer into an unsigned 2D multisample array view in layer/y/x/fragment order. It requires enabled multisample storage images and formatless image writes, 2/4/8 fragments and valid aligned buffer and dispatch ranges. The caller supplies the matching storage view in GENERAL and owns barriers, completion and resource lifetimes.
+-- 
+2.43.0
+

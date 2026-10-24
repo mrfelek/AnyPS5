@@ -1,0 +1,332 @@
+From 8603acbbbce6c8df9b64f56df75a2c359b4eded5 Mon Sep 17 00:00:00 2001
+From: mrfelek <17274927+mrfelek@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 17:38:21 +0000
+Subject: [PATCH] fix(shader): fold descriptor web paths that hold the lane
+ index or texels
+
+A descriptor web path whose T# dwords are per-lane values left in the
+registers (the lane index from v_mbcnt or arithmetic of texels from an
+image read) was not rebuilt and the read stopped with "GetImageResource
+dword 0 is not a valid runtime value". PPSA26344 compute shader
+0x800037fe00 has such a path into its waterfall loop.
+
+Fold these paths like the program counter, EXEC and lane mask ones:
+select the first descriptor and record an InvalidDescriptor fault when
+a lane takes the path. APS5_STRICT_DESCRIPTOR_WEBS still throws.
+
+Folding exposed per-lane selections taken in the wrong order: when a
+tuple held selects from two blocks, the first one found became the
+outer selector even if it sat in the dominating block, so the inner
+selector placed in the later block did not dominate its use. Take the
+select in the latest block first.
+
+AI-assisted. Tested by me on my own machine.
+---
+ .../libSceAgcDriver/tests/ShaderMemory.cpp    | 69 +++++++++++++++++++
+ .../tests/execution/DescriptorWebFaults.cpp   | 29 ++++++++
+ .../Optimization/src/ResourceTracker.cpp      | 59 ++++++++++------
+ docs/dev/ENVIRONMENT.md                       |  2 +-
+ docs/dev/debt/shader.md                       |  2 +-
+ 5 files changed, 138 insertions(+), 23 deletions(-)
+
+diff --git a/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp b/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
+index 755636738..ddba2ba8a 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
+@@ -807,6 +807,73 @@ void verifyTypeZeroImageMaterialization() {
+     }
+ }
+ 
++void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message) {
++    using namespace ShaderRecompiler;
++    constexpr std::uint32_t Format8888UNorm = 56;
++    constexpr std::uint32_t Type2D = 9;
++    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
++    static Texture textures[2];
++    const auto imageDescriptor = [&](const Texture& texture) {
++        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
++        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
++    };
++    std::array<std::uint32_t, 4> output{};
++    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
++    std::array<std::uint32_t, 32> srt{};
++    const auto first = imageDescriptor(textures[0]);
++    const auto second = imageDescriptor(textures[1]);
++    std::copy(first.begin(), first.end(), srt.begin());
++    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0x30027facu};
++    std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
++    srt[20] = 1u;
++    std::copy(second.begin(), second.end(), srt.begin() + 24);
++    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
++    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
++    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
++    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
++    RecompileRequest request{};
++    request.shader = {ShaderStage::Compute, address, code, 0, {}};
++    request.context.waveSize = 32u;
++    request.context.userDataBaseRegister = 0;
++    request.context.userData = userData;
++    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
++    request.target.vulkanVersion = 0x00401000u;
++    request.target.spirvVersion = 0x00010300u;
++    request.target.subgroupSize = 32;
++    request.target.supportedCapabilities = capabilities;
++    request.target.supportedExtensions = extensions;
++    request.target.bdaAbiVersion = BdaAbi::Version;
++    request.target.fragmentShaderBarycentricEnabled = false;
++    request.layout.pushConstantSizeBytes = 128;
++    const auto plan = GetResourcePlan(request);
++    require(plan->info.usesFaultBuffer && plan->info.images.size() >= 2u && std::ranges::all_of(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }), message);
++    AgcDriver::ShaderMemory memory({});
++    const auto capture = memory.Capture(request);
++    const auto memoryRegions = memory.Regions();
++    request.context.memory = memoryRegions;
++    static_cast<void>(Recompile(request, *capture));
++}
++
++
++void verifyDescriptorWebLaneIndexFold() {
++    const std::vector<std::uint32_t> code{
++        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850005u, 0xbf068110u,
++        0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
++        0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u,
++        0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
++    CompileDescriptorWeb(code, 0x24000u, "descriptor web lane index: the path whose T# holds the lane index was not folded beside the two T#s into faulting arms");
++}
++
++void verifyDescriptorWebSelectOrder() {
++    const std::vector<std::uint32_t> code{
++        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xf40c0700u, 0xfa000060u, 0xbf8cc07fu, 0x7d880090u,
++        0x7e14021cu, 0x02041408u, 0x7e16021du, 0x02061609u, 0x7e18021eu, 0x0208180au, 0x7e1a021fu, 0x020a1a0bu, 0xbf068010u, 0xbf85000au, 0x7d880088u, 0x7e1c0220u,
++        0x020c1c0cu, 0x7e1e0221u, 0x020e1e0du, 0x7e200222u, 0x0210200eu, 0x7e220223u, 0x0212220fu, 0xbf820004u, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
++        0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u,
++        0x80060000u, 0xbf810000u};
++    CompileDescriptorWeb(code, 0x25000u, "descriptor web select order: per-lane T# selects in two blocks were not split into arms");
++}
++
+ void verifyOutOfRangeConstantReads() {
+     std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
+     for (std::uint32_t dword = 0; dword < 8u; dword++) {
+@@ -7924,6 +7991,8 @@ int main(int argc, char** argv) {
+         verifySignedSrtComparison();
+         verifyTypeZeroImageMaterialization();
+         verifyOutOfRangeConstantReads();
++        verifyDescriptorWebLaneIndexFold();
++        verifyDescriptorWebSelectOrder();
+         verifySignedMinimum();
+         verifyMayEvaluate();
+         verifyPureFlatSlots();
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/DescriptorWebFaults.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/DescriptorWebFaults.cpp
+index 81db77799..68eb5ec76 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/DescriptorWebFaults.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/DescriptorWebFaults.cpp
+@@ -52,6 +52,25 @@ alignas(256) constexpr std::array<std::uint32_t, 25> NoLaneWebCode{
+     0xbf810000u,
+ };
+ 
++alignas(256) constexpr std::array<std::uint32_t, 48> LaneIndexWebCode{
++    0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u,
++    0xbf8cc07fu, 0xbf068010u, 0xbf850005u, 0xbf068110u, 0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu,
++    0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
++    0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu,
++    0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u,
++    0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u,
++};
++
++alignas(256) constexpr std::array<std::uint32_t, 49> NoLaneLaneIndexWebCode{
++    0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u,
++    0xbf8cc07fu, 0xbf068010u, 0xbf850005u, 0xbf068110u, 0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu,
++    0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
++    0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu,
++    0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u,
++    0x7e1c0508u, 0x7e1e0509u, 0xbefe0380u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u,
++    0xbf810000u,
++};
++
+ class StderrCapture {
+ public:
+     StderrCapture() {
+@@ -172,6 +191,16 @@ void RunTests(AgcDriver::VulkanDevice& device) {
+     Require(Faulted(selected.log, SamplePc), "descriptor web faults: a lane selecting an undefined arm did not fault at the read:\n" + selected.log);
+     const auto selectedNoLanes = Run(device, NoLaneWebCode, UndefinedFormat, SecondSelector);
+     Require(Clean(selectedNoLanes.log) && selectedNoLanes.word == Untouched, "descriptor web faults: an undefined arm faulted or wrote with no lane enabled:\n" + selectedNoLanes.log);
++
++    constexpr std::uint32_t LaneIndexSamplePc = 0xa8u;
++    const auto laneValid = Run(device, LaneIndexWebCode, Format8888UNorm, ValidSelector);
++    Require(Clean(laneValid.log) && Reads(laneValid.word, FirstTexel), "descriptor web faults: with a lane-index path, a lane selecting the first arm faulted or did not read its texture:\n" + laneValid.log);
++    const auto laneOther = Run(device, LaneIndexWebCode, Format8888UNorm, SecondSelector);
++    Require(Clean(laneOther.log) && Reads(laneOther.word, SecondTexel), "descriptor web faults: with a lane-index path, a lane selecting the second arm faulted or did not read its texture:\n" + laneOther.log);
++    const auto laneFolded = Run(device, LaneIndexWebCode, Format8888UNorm, FoldedSelector);
++    Require(Faulted(laneFolded.log, LaneIndexSamplePc), "descriptor web faults: a lane on the lane-index path did not fault at the read:\n" + laneFolded.log);
++    const auto laneFoldedNoLanes = Run(device, NoLaneLaneIndexWebCode, Format8888UNorm, FoldedSelector);
++    Require(Clean(laneFoldedNoLanes.log) && laneFoldedNoLanes.word == Untouched, "descriptor web faults: the lane-index path faulted or wrote with no lane enabled:\n" + laneFoldedNoLanes.log);
+ }
+ 
+ }
+diff --git a/core/shader/recompiler/Optimization/src/ResourceTracker.cpp b/core/shader/recompiler/Optimization/src/ResourceTracker.cpp
+index bf75be1f2..c475171b1 100644
+--- a/core/shader/recompiler/Optimization/src/ResourceTracker.cpp
++++ b/core/shader/recompiler/Optimization/src/ResourceTracker.cpp
+@@ -1184,7 +1184,7 @@ private:
+         inst.Parent()->RemoveInstruction(&inst);
+     }
+ 
+-    static bool HoldsControlValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
++    static bool HoldsFoldableValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
+         value = value->Resolve();
+         if (value->HasImmediate()) {
+             return false;
+@@ -1194,7 +1194,12 @@ private:
+             case IrOpcode::GetExec:
+             case IrOpcode::GetExecLo:
+             case IrOpcode::GetExecHi:
+-            case IrOpcode::Ballot: return true;
++            case IrOpcode::Ballot:
++            case IrOpcode::LaneId:
++            case IrOpcode::ImageRead:
++            case IrOpcode::ImageSampleExplicitLod:
++            case IrOpcode::ImageSampleImplicitLod:
++            case IrOpcode::ImageSampleRaw: return true;
+             default: break;
+         }
+         if (depth == 0u) {
+@@ -1209,16 +1214,16 @@ private:
+             return false;
+         }
+         for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+-            if (HoldsControlValue(value->Argument(index), depth - 1u, seen)) {
++            if (HoldsFoldableValue(value->Argument(index), depth - 1u, seen)) {
+                 return true;
+             }
+         }
+         return false;
+     }
+ 
+-    static bool HoldsControlValue(IrValue* value) {
++    static bool HoldsFoldableValue(IrValue* value) {
+         std::vector<const IrValue*> seen;
+-        return HoldsControlValue(value, phiSearchDepth, seen);
++        return HoldsFoldableValue(value, phiSearchDepth, seen);
+     }
+ 
+     struct DescriptorWeb {
+@@ -1226,7 +1231,7 @@ private:
+         static constexpr std::size_t maxArms = 64u;
+         static constexpr std::uint32_t foldedArm = 0xffffffffu;
+         std::string failure;
+-        bool foldedControlValue = false;
++        bool foldedValue = false;
+         std::vector<std::vector<IrValue*>> arms;
+         std::map<std::vector<IrValue*>, IrValue*> selectors;
+         std::vector<std::pair<IrBlock*, IrValue*>> phis;
+@@ -1297,17 +1302,35 @@ private:
+         if (const auto known = web.selectors.find(tuple); known != web.selectors.end()) {
+             return known->second;
+         }
++        if (web.order.empty()) {
++            const auto& order = m_program.BlockOrder();
++            for (std::size_t index = 0; index < order.size(); index++) {
++                web.order.emplace(order[index], index);
++            }
++        }
+         const auto phi = std::ranges::find_if(tuple, [](const IrValue* value) { return value->IsPhi(); });
+-        const auto lane = std::ranges::find_if(tuple, [](const IrValue* value) { return value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::ReadFirstLane; });
+-        if (phi == tuple.end() && lane != tuple.end()) {
+-            return LaneSelector(tuple, **lane, web, position);
++        IrValue* lane = nullptr;
++        std::size_t laneOrder = 0;
++        for (IrValue* value : tuple) {
++            if (value->Opcode() != IrOpcode::SelectU32 && value->Opcode() != IrOpcode::ReadFirstLane) {
++                continue;
++            }
++            const auto found = web.order.find(value->Parent());
++            const std::size_t index = found == web.order.end() ? 0u : found->second;
++            if (lane == nullptr || index > laneOrder) {
++                lane = value;
++                laneOrder = index;
++            }
++        }
++        if (phi == tuple.end() && lane != nullptr) {
++            return LaneSelector(tuple, *lane, web, position);
+         }
+         if (phi == tuple.end()) {
+-            if (std::ranges::any_of(tuple, [](IrValue* value) { return HoldsControlValue(value); })) {
++            if (std::ranges::any_of(tuple, [](IrValue* value) { return HoldsFoldableValue(value); })) {
+                 if (StrictDescriptorWebs()) {
+-                    return GiveUp(web, "a descriptor dword depends on the program counter, EXEC or a lane mask");
++                    return GiveUp(web, "a descriptor dword depends on the program counter, EXEC, a lane mask, the lane index or texels");
+                 }
+-                web.foldedControlValue = true;
++                web.foldedValue = true;
+                 return &m_builder.Constant(DescriptorWeb::foldedArm);
+             }
+             for (IrValue* value : tuple) {
+@@ -1327,12 +1350,6 @@ private:
+             web.arms.push_back(std::move(tuple));
+             return &m_builder.Constant(static_cast<std::uint32_t>(web.arms.size() - 1u));
+         }
+-        if (web.order.empty()) {
+-            const auto& order = m_program.BlockOrder();
+-            for (std::size_t index = 0; index < order.size(); index++) {
+-                web.order.emplace(order[index], index);
+-            }
+-        }
+         IrBlock* block = nullptr;
+         std::size_t latest = 0;
+         for (const IrValue* value : tuple) {
+@@ -1456,7 +1473,7 @@ private:
+         }
+         DescriptorWeb web;
+         IrValue* selector = WebSelector(tuple, web, inst);
+-        const bool select = selector != nullptr && !web.arms.empty() && (web.arms.size() > 1u || web.foldedControlValue);
++        const bool select = selector != nullptr && !web.arms.empty() && (web.arms.size() > 1u || web.foldedValue);
+         if (select) {
+             for (const auto& [block, phi] : web.phis) {
+                 block->InsertInstructionBefore(nullptr, phi);
+@@ -1487,7 +1504,7 @@ private:
+             }
+         }
+         if (selector == nullptr || web.arms.empty()) {
+-            const std::string reason = !web.failure.empty() ? web.failure : web.foldedControlValue ? std::string("every path's descriptor depends on the program counter, EXEC or a lane mask") : std::string("no descriptor was found on any path");
++            const std::string reason = !web.failure.empty() ? web.failure : web.foldedValue ? std::string("every path's descriptor depends on the program counter, EXEC, a lane mask, the lane index or texels") : std::string("no descriptor was found on any path");
+             for (std::uint32_t slot = 0; slot < handleCount; slot++) {
+                 if (split[slot]) {
+                     m_splitFailures.try_emplace(handles[slot], reason);
+@@ -1496,7 +1513,7 @@ private:
+             return;
+         }
+ 
+-        if (web.foldedControlValue) {
++        if (web.foldedValue) {
+             const std::array<IrValue*, 2> compare {selector, &m_builder.Constant(DescriptorWeb::foldedArm)};
+             IrValue* folded = EmitBefore(inst, IrOpcode::IEqual32, IrType::Bool, compare);
+             EmitDescriptorFault(inst, *folded, m_builder.Constant(0u), m_builder.Constant(0u));
+diff --git a/docs/dev/ENVIRONMENT.md b/docs/dev/ENVIRONMENT.md
+index b340458d2..d41517cc8 100644
+--- a/docs/dev/ENVIRONMENT.md
++++ b/docs/dev/ENVIRONMENT.md
+@@ -49,7 +49,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_SAVEEXEC_WRITE_FIRST` | presence | `core/shader/recompiler/Translation/src/ControlFlowInstructions.cpp` |  | writes the saved exec to the destination before reading the source in s_*_saveexec |
+ | `APS5_SINGLE_LANE` | string | `core/shader/recompiler/Recompiler.cpp` |  | hex code addresses (comma separated, or all) of wave64 programs kept at one guest lane per invocation |
+ | `APS5_SRT_DEBUG` | presence | `core/shader/recompiler/Optimization/src/RequestMemoryView.cpp` |  | prints extra SRT descriptor-walk debug output, such as guest reads outside the request memory |
+-| `APS5_STRICT_DESCRIPTOR_WEBS` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | makes a T# or S# read in a descriptor web throw when a path's descriptor dwords depend on the program counter, EXEC or a lane mask, instead of selecting the first descriptor and recording an `InvalidDescriptor` fault when a lane takes that path; 0 leaves it off |
++| `APS5_STRICT_DESCRIPTOR_WEBS` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | makes a T# or S# read in a descriptor web throw when a path's descriptor dwords depend on the program counter, EXEC, a lane mask, the lane index or texels, instead of selecting the first descriptor and recording an `InvalidDescriptor` fault when a lane takes that path; 0 leaves it off |
+ | `APS5_TRACE_BDA` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | prints the first few accesses that make a program take the address-based path |
+ | `APS5_TRACE_BUFFER_WRITTEN` | presence | `core/shader/recompiler/Optimization/src/DescriptorBindingBuilder.cpp` |  | prints how many guest buffer elements a program may store to and how many it only loads |
+ | `APS5_TRACE_IMAGE_TABLE` | presence | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp` |  | traces image-table resolution |
+diff --git a/docs/dev/debt/shader.md b/docs/dev/debt/shader.md
+index 2b2839ad3..649851945 100644
+--- a/docs/dev/debt/shader.md
++++ b/docs/dev/debt/shader.md
+@@ -52,7 +52,7 @@
+ - Uint and Sint [image table](../../../core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvDescriptors.cpp) entries and direct T#s under a table S# sample through a point-filtered copy of the S#: Vulkan leaves linear filtering of integer formats undefined; the console is assumed to point-sample.
+ - Comparison sampling of a color texture through an [image table](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) S# throws at the first dispatch or draw that binds it.
+ - An [image table](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) key with no key domain whose `key * stride` wraps past 2^32 to an offset between records faults only when the build already expects a fault; otherwise the fault buffer is not read and it reads zeros.
+-- [Descriptor web paths](../../../core/shader/recompiler/Optimization/src/ResourceTracker.cpp) whose T# or S# dwords depend on the program counter, EXEC or a lane mask (registers left from `s_getpc_b64`, `s_mov_b64 exec` or a compare and its accumulation, typically on a loop's entry edge) select the first descriptor instead of throwing when the shader is compiled; the path is assumed not to reach the read, which is not proven, and the console would read through those values. A lane that takes such a path records an `InvalidDescriptor` BDA fault, but a shader that also uses an image table reads its fault buffer back only when a table record is poisoned, so the fault is lost there. Splits that substitute each incoming edge are not folded: a program-counter arm there stays a mandatory T#. PPSA23566 (UFC 6) needs this for compute shader 0x1163c84000. `APS5_STRICT_DESCRIPTOR_WEBS` makes such a read throw.
++- [Descriptor web paths](../../../core/shader/recompiler/Optimization/src/ResourceTracker.cpp) whose T# or S# dwords depend on the program counter, EXEC, a lane mask, the lane index or texels (registers left from `s_getpc_b64`, `s_mov_b64 exec`, a compare, `v_mbcnt` or an image read, often on a loop entry edge) select the first descriptor instead of throwing when the shader is compiled; the path is assumed not to reach the read, which is not proven, and the console would read through those values. A lane that takes such a path records an `InvalidDescriptor` BDA fault, but a shader that also uses an image table reads its fault buffer back only when a table record is poisoned, so the fault is lost there. Splits that substitute each incoming edge are not folded: a program-counter arm there stays a mandatory T#. PPSA23566 (UFC 6) needs this for compute shader 0x1163c84000, PPSA26344 (Ghost of Yōtei) for 0x800037fe00 (texels). `APS5_STRICT_DESCRIPTOR_WEBS` makes such a read throw.
+ - [MaskedSelectEliminator](../../../core/shader/recompiler/Optimization/src/MaskedSelectEliminator.cpp) can discard inactive source lanes through `ReadFirstLane` only when its read mask implies the write mask and its result is unobserved outside the read mask. A loop-local read mask requires result uses in the same block without phi transport. The empty-EXEC lane-zero fallback follows AMD's [Vega ISA, section 12.8, V_READFIRSTLANE_B32, page 127](https://www.amd.com/content/dam/amd/en/documents/radeon-tech-docs/instruction-set-architectures/vega-shader-instruction-set-architecture.pdf) and the existing SPIR-V emitter. The optimization is covered by synthetic IR tests but has not been compared with console hardware; a proof that needs a read mask of a kind that is already being solved is refused.
+ - [DenormalFlushEliminator](../../../core/shader/recompiler/Optimization/src/DenormalFlushEliminator.cpp) drops the result flush of a `v_mul_f32` or `v_mul_legacy_f32` product behind its nearest-even tininess check (see f32 denormals) when both factors are denormal-free: a product the check keeps is then zero, infinite, NaN or at least 2^-126 in magnitude, provided the driver rounds it as it rounds the check's multiply.
+ - [Shader modules built at registration](../../../core/shader/recompiler/Recompiler.cpp) (shader recompiler): on devices with graphics pipeline libraries a vertex or pixel module reads buffer V# words, image modes, swizzles and mip ranges, depth-compare state, export mappings and vertex component selectors at run time instead of specializing on them per draw, so its libraries can be built when the shader is registered. A module that would exceed `SpirvTarget::registrationWordLimit` (200000 SPIR-V words) is emitted specialized as before: on RADV (Radeon 660M, Mesa 26.2.4) a sample of 60 pixel shaders of a retail title compiled 1.9 to 2.2 times slower in registration form below 141k words and 3.8 to 5.7 times slower above 280k words (none in between), so the limit sits in that gap; it was not measured on other drivers. Texel-offset folding, the format word of a buffer accessed with the descriptor's format (`buffer_load_format_*`; as runtime values every format's decoder is compiled, which made CI's lavapipe JIT ten times slower) and the vertex attribute numeric class stay specialized, so shaders with the first two, and pixel shaders whose image needs a multisampled descriptor, get no registration result; these, and every draw whose fixed-function state differs from the prebuild's, still build their libraries at the draw. Compute and the other stages stay specialized: in registration form the `agc_driver_dword_pattern_fill` compute shader hung CI's lavapipe (Mesa 25.2.8) when built with `ANYPS5_ENABLE_SPIRV_TOOLS=ON`, not on RADV, and the cause was not found.
+-- 
+2.43.0
+

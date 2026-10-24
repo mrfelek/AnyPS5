@@ -1,0 +1,42 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/FloatFlushProbe.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/FloatFlushProbe.cpp
+index 071286d713..04da2f0257 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/FloatFlushProbe.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/FloatFlushProbe.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <cstdio>
++#include <cstdlib>
+ #include <optional>
+ #include <span>
+ #include <vector>
+@@ -170,15 +172,27 @@ FloatFlushProbeResult ProbeFloat32FlushToZero(VulkanDevice& device, const Shader
+     FloatFlushProbeResult result;
+     const std::array<std::optional<ShaderRecompiler::ShaderFloatMode>, 3> modes{std::nullopt, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false}};
+     const std::array<std::pair<std::span<const std::uint32_t>, const std::uint32_t (*)[Inputs]>, 3> programs{{{MixedCode, MixedRows}, {TinyCode, TinyRows}, {MixedTinyCode, MixedTinyRows}}};
++    const bool print = std::getenv("APS5_DEBUG_F32_PROBE") != nullptr;
++    std::uint32_t modeIndex = 0;
+     for (const auto& mode : modes) {
++        std::uint32_t programIndex = 0;
+         for (const auto& [code, rows] : programs) {
+             const auto software = Run(device, target, false, mode, code, rows);
+             const auto hardware = Run(device, target, true, mode, code, rows);
+             for (std::size_t index = 0; index < software.size(); ++index) {
+                 ++result.compared;
+-                if (software[index] != hardware[index] && !(IsNan(software[index]) && IsNan(hardware[index]))) ++result.mismatches;
++                if (software[index] != hardware[index] && !(IsNan(software[index]) && IsNan(hardware[index]))) {
++                    ++result.mismatches;
++                    if (print) {
++                        const auto tid = index / Results;
++                        const auto* in = rows[tid];
++                        std::fprintf(stderr, "[f32-probe] mode %u program %u tid %zu slot %zu in %08x %08x %08x %08x emulated %08x hardware %08x\n", modeIndex, programIndex, tid, index % Results, in[0], in[1], in[2], in[3], software[index], hardware[index]);
++                    }
++                }
+             }
++            ++programIndex;
+         }
++        ++modeIndex;
+     }
+     return result;
+ }
