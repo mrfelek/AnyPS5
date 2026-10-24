@@ -1,0 +1,10 @@
+date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_per_frame,gpu_load_pct,cpu_s_per_10s,draw_cache_hit_pct,uploads_mib_per_10s,writebacks_mib_per_10s,vram_gb,page
+2026-10-24,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,6d0139cd33,A,92,108.7,103.2,98.2,20.5,,,,9.1,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,6d0139cd33+f32-probe-v2,B3,117,85.5,72.7,89.6,22.9,,,,9.5,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,6d0139cd33,A,93,108.3,102.9,98.4,20.6,,,,10.0,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,6d0139cd33+f32-probe-v2,B3,113,88.7,75.2,91.7,26.5,,,,10.0,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Diablo II Resurrected,PPSA03912,main menu,AMD mini PC,6d0139cd33,A,51.4,193.5,187.0,,,0,,,1.9,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Diablo II Resurrected,PPSA03912,main menu,AMD mini PC,6d0139cd33+f32-probe-v2,B,51.2,193.0,186.7,,,0,,,1.8,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,Linux desktop,3ca5b17655,A,3.5,3322,359.5,18.9,13.5,0.0,2309,1713,10.0,runs/2026-10-24-hot-wheels-race-load.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race,Linux desktop,3ca5b17655,A,40.5,249,114,47.6,20.3,,18974,15914,10.3,runs/2026-10-24-hot-wheels-race-load.md
+2026-10-24,Sonic Origins Plus,PPSA05325,menu,Linux desktop,a19e7f6fd,diag,142,70.4,48.3,75.3,25.6,3.5,188260,27,6.9,runs/2026-10-24-sonic-s2-menu-draw-cache.md
