@@ -1,8 +1,8 @@
-# Diablo II Resurrected (PPSA03912), main menu, f32 denormal flush A/B
+# f32 denormal flush probe A/B: Diablo II Resurrected (PPSA03912) main menu, Hot Wheels Infinite Rush (PPSA22408) on Windows
 
 Question: how much GPU time does the emulated 32-bit float denormal flush cost, and is it needed on each GPU?
 
-- **Dates / machines:** 2026-10-24, Linux desktop (RTX 3080 Ti) and AMD mini PC (Radeon 780M). See [machines.md](../machines.md).
+- **Dates / machines:** 2026-10-24, Linux desktop (RTX 3080 Ti), AMD mini PC (Radeon 780M) and Windows laptop (RTX A2000). See [machines.md](../machines.md).
 - **Phase measured:** settled main menu, from 60 s after pressing Cross until the stop (about 3-6 min), no input.
 - **Environment:** default profile set, shader disk cache off (`ANYPS5_NO_SHADER_CACHE=1`) so every arm compiles the same shaders, audio muted.
 
@@ -57,6 +57,27 @@ All arms log `f32 denormal flush: hardware (0 of 5472 probe results differ)`, so
 | B | 51.2 | 193.0 ms | 186.7 ms | 70116 (46 us) | 139% | 8.6 / 1.8 / 11.7 |
 
 On this machine the D2R menu is CPU-bound on queue worker 0 (99% busy, mostly draw recording at about 46 us per draw).
+
+## Run 4: same probe on Windows laptop (RTX A2000, driver 610.60), Hot Wheels Infinite Rush (PPSA22408)
+
+Build: A = upstream `6d0139cd33` + the GameUpdate "no update" fix; B = A + probe patch v2. All four float tests pass on Windows. B logs `f32 denormal flush: hardware (0 of 5472 probe results differ)`. Order A B A B A B; the table uses the warm pairs 2 and 3 (A-1 aborted at the garage load with the known "still pinned by GPU work" error).
+
+| Phase | Metric | A-2 | B-2 | A-3 | B-3 |
+|---|---|---|---|---|---|
+| Title idle | Presents/10 s | 36.7 | 37.2 | 36.7 | 36.5 |
+| | GPU ms/frame | 112.9 | 107.3 | 111.2 | 112.6 |
+| | Draw class ms/10 s | 519 | 468 | 516 | 461 |
+| Title to menu | Presents/10 s | 35.4 | 36.4 | 35.5 | 35.5 |
+| | GPU ms/frame | 111.1 | 106.8 | 110.4 | 110.6 |
+| | Draw class ms/10 s | 621 | 552 | 622 | 545 |
+| Menu / garage | Presents/10 s | 8.75 | 9.71 | 9.38 | 9.82 |
+| | GPU ms/frame | 156.0 | 150.2 | 155.5 | 151.9 |
+| | Draw class ms/10 s | 276 | 228 | 271 | 233 |
+
+- B cuts the draw GPU class by 10-16% in every phase. In Hot Wheels, shadow-publish and storage traffic dominate the frame, so presents move 0-1% on the title and +4-11% in the garage, and GPU ms/frame drops 0-5%.
+- Unchanged between arms: other GPU classes (shadow-publish about 1730, storage upload about 890, write-back about 310 ms/10 s), CPU (about 90% of one core on the title), draw cache (about 40 hits of 1950 lookups per 10 s), 0 pipeline cache misses, copies (staging about 1.47 GB in and back, uploads about 12.2 GB, write-backs about 13.6 GB per 10 s, all within 2%), waits (hook syncs about 9.8 s, compute-queue lock about 3.1 s per 10 s), RAM about 7.3 GB, VRAM 3.5-3.7 GB. In-flight wait p50: A 11.7 ms, B 10.1-10.5 ms.
+- Castlevania Belmont's Curse (PPSA35399), one pair, inconclusive: A reached gameplay; B stayed on the black loading screen for about 9 minutes after New Game and was stopped. The second B run was stopped before New Game. Plain-main runs on this laptop always reach gameplay, sometimes after a few minutes of loading. Not yet known whether the probe causes the hang; to be rerun.
+- No pixel diff yet (screenshots kept).
 
 ## Which bottleneck moved
 

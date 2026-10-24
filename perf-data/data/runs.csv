@@ -31,3 +31,9 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89+7844,B1,2.6,,327,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
 2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89,A2,2.6,,327,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
 2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89+7844,B2,2.6,,325,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,garage menu,Windows laptop,6d0139cd33,A-2,8.75,,156.0,,,,,,3.6,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,garage menu,Windows laptop,6d0139cd33+f32-probe-v2,B-2,9.71,,150.2,,,,,,3.6,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,garage menu,Windows laptop,6d0139cd33,A-3,9.38,,155.5,,,,,,3.6,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,garage menu,Windows laptop,6d0139cd33+f32-probe-v2,B-3,9.82,,151.9,,,,,,3.6,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,title screen,Windows laptop,6d0139cd33,A-2,36.7,,112.9,,,,,,3.6,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,title screen,Windows laptop,6d0139cd33+f32-probe-v2,B-2,37.2,,107.3,,,,,,3.6,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
