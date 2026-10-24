@@ -1,0 +1,53 @@
+From f463153aba65d1580024623b0905c30b7207b8c8 Mon Sep 17 00:00:00 2001
+From: mrfelek <17274927+mrfelek@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 17:36:51 +0000
+Subject: [PATCH] perf(agc): probe the f32 denormal flush on NVIDIA's
+ proprietary driver
+
+The driver declares no shaderDenormFlushToZeroFloat32, so every f32 add, mul and fma kept the software flush. Run the same probe as on MoltenVK and use the driver's default handling when it matches the emulated flush.
+---
+ .../libSceAgcDriver/Execution/include/Float32FlushControl.hpp  | 2 +-
+ core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp    | 3 ++-
+ docs/dev/ARCHITECTURE.md                                       | 2 +-
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp
+index 0d93c2c2a4..3e6af23dcb 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp
+@@ -12,7 +12,7 @@ struct Float32FlushControl {
+ 
+ inline Float32FlushControl Float32FlushControlFor(VkDriverId driver, VkBool32 flushToZero, VkShaderFloatControlsIndependence independence) {
+     const bool declared = flushToZero == VK_TRUE && independence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE;
+-    return {declared || driver == VK_DRIVER_ID_MOLTENVK, declared};
++    return {declared || driver == VK_DRIVER_ID_MOLTENVK || driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY, declared};
+ }
+ 
+ }
+diff --git a/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp b/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp
+index f51d28a2bf..55dc9f5ba9 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp
+@@ -17,7 +17,8 @@ constexpr Case Cases[]{
+     {VK_DRIVER_ID_MESA_RADV, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, true, true},
+     {VK_DRIVER_ID_MESA_RADV, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY, true, true},
+     {VK_DRIVER_ID_MESA_RADV, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE, false, false},
+-    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_FALSE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, false, false},
++    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_FALSE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, true, false},
++    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, true, true},
+     {VK_DRIVER_ID_AMD_PROPRIETARY, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY, true, true},
+     {static_cast<VkDriverId>(0), VK_FALSE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE, false, false},
+ };
+diff --git a/docs/dev/ARCHITECTURE.md b/docs/dev/ARCHITECTURE.md
+index 6c47cfa197..43f18a27b1 100644
+--- a/docs/dev/ARCHITECTURE.md
++++ b/docs/dev/ARCHITECTURE.md
+@@ -210,4 +210,4 @@ The register layout and instruction contract follow [AMD RDNA2 ISA sections 5.8
+ 
+ ### Hardware f32 denormal flush
+ 
+-A device with `shaderDenormFlushToZeroFloat32` and an f32 denormal behaviour independent of the other widths runs a probe when it is created (`ProbeFloat32FlushToZero`): the three programs of `agc_driver_f32_denormal_flush` (one mixed module with every flushing instruction, and the tiny-product programs), with no float mode, with `IEEE_MODE` off and with it on, each compiled twice, with the emulated flush and with `DenormFlushToZero 32` declared. When every result matches, `SpirvTarget::float32FlushToZero` is set: every module declares the mode, and `v_add_f32`, `v_sub_f32`, `v_subrev_f32`, `v_mul_f32`, the fused `v_fma_f32`, `v_fmac_f32`, `v_fmamk_f32` and `v_fmaak_f32`, `v_floor_f32` and `v_ceil_f32` drop their software flush in the default rounding mode. VOP3P forms, the other rounding modes and the other instructions keep the emulation. `APS5_NO_HW_F32_FLUSH` skips the probe.
++A device with `shaderDenormFlushToZeroFloat32` and an f32 denormal behaviour independent of the other widths, and MoltenVK and NVIDIA's proprietary driver, which declare no f32 flush, run a probe when the device is created (`ProbeFloat32FlushToZero`): the three programs of `agc_driver_f32_denormal_flush` (one mixed module with every flushing instruction, and the tiny-product programs), with no float mode, with `IEEE_MODE` off and with it on, each compiled twice, with the emulated flush and with `DenormFlushToZero 32` declared (on a device that declares no f32 flush, with no execution mode, so the driver's default f32 denormal handling is what is measured). When every result matches, `SpirvTarget::float32FlushToZero` is set: every module declares the mode where the device has it, and `v_add_f32`, `v_sub_f32`, `v_subrev_f32`, `v_mul_f32`, the fused `v_fma_f32`, `v_fmac_f32`, `v_fmamk_f32` and `v_fmaak_f32`, `v_floor_f32` and `v_ceil_f32` drop their software flush in the default rounding mode. VOP3P forms, the other rounding modes and the other instructions keep the emulation. `APS5_NO_HW_F32_FLUSH` skips the probe.
+-- 
+2.43.0
+

@@ -1,0 +1,119 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp
+index 361aadb063..114667c6ee 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp
+@@ -9,6 +9,12 @@ inline bool FragmentShaderBarycentricUsable(VkDriverId driver, bool reported) {
+     return reported && driver != VK_DRIVER_ID_MOLTENVK;
+ }
+ 
++// RADV hands PerVertexKHR values to the second triangle of a quad in an order that does not match gl_BaryCoordKHR,
++// so full-screen passes show a diagonal seam. Pixel shaders that host interpolation can express skip the extension there.
++inline bool HostInterpolationPreferred(VkDriverId driver) {
++    return driver == VK_DRIVER_ID_MESA_RADV;
++}
++
+ }
+ 
+ #endif
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
+index 55e54a39bb..17ad3c934a 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
+@@ -315,6 +315,7 @@ struct VulkanDevice::State {
+     bool meshShader = false;
+     bool fragmentShaderBarycentric = false;
+     bool shaderTerminateInvocation = false;
++    bool hostInterpolationFirst = false;
+     bool geometryShader = false;
+     bool sampleRateShading = false;
+     bool storageImageMultisample = false;
+@@ -1181,6 +1182,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
+         driverId = driver.driverID;
+         state->driverInfo = std::string(driver.driverName) + " " + driver.driverInfo;
+         state->individuallyFreeDescriptorSets = driver.driverID == VK_DRIVER_ID_MESA_LLVMPIPE;
++        state->hostInterpolationFirst = HostInterpolationPreferred(driver.driverID) && std::getenv("APS5_NO_HOST_INTERPOLATION_FIRST") == nullptr;
++        APS5_LOG_OUT("Pixel interpolation driver=%d hostInterpolationFirst=%d", static_cast<int>(driver.driverID), state->hostInterpolationFirst ? 1 : 0);
+         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
+     }
+     auto byteFeatures = QueryBdaByteFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
+@@ -3684,6 +3687,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
+     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
+     auto target = state->shaderProfile->Target();
+     target.float32FlushToZero = state->float32FlushToZero;
++    target.hostInterpolationFirst = state->hostInterpolationFirst;
+     target.float32DenormPreserve = state->float32DenormPreserve;
+     return target;
+ }
+diff --git a/core/libs/prx/libSceAgcDriver/tests/FragmentBarycentric.cpp b/core/libs/prx/libSceAgcDriver/tests/FragmentBarycentric.cpp
+index 6b67d8629f..e65077a142 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/FragmentBarycentric.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/FragmentBarycentric.cpp
+@@ -29,5 +29,9 @@ int main() {
+             ++failures;
+         }
+     }
++    if (!AgcDriver::HostInterpolationPreferred(VK_DRIVER_ID_MESA_RADV) || AgcDriver::HostInterpolationPreferred(VK_DRIVER_ID_NVIDIA_PROPRIETARY) || AgcDriver::HostInterpolationPreferred(VK_DRIVER_ID_AMD_PROPRIETARY)) {
++        std::fprintf(stderr, "host interpolation must be preferred on RADV only\n");
++        ++failures;
++    }
+     return failures == 0 ? 0 : 1;
+ }
+diff --git a/core/shader/recompiler/CacheKey.hpp b/core/shader/recompiler/CacheKey.hpp
+index d95621f9a1..4d3eeaa9a4 100644
+--- a/core/shader/recompiler/CacheKey.hpp
++++ b/core/shader/recompiler/CacheKey.hpp
+@@ -292,6 +292,7 @@ private:
+         append(key, value.float32FlushToZero);
+         append(key, value.waveLdsMemoryBarriers);
+         append(key, value.float32DenormPreserve);
++        append(key, value.hostInterpolationFirst);
+     }
+ };
+ 
+diff --git a/core/shader/recompiler/Recompiler.cpp b/core/shader/recompiler/Recompiler.cpp
+index dae9b85256..cc98387b8e 100644
+--- a/core/shader/recompiler/Recompiler.cpp
++++ b/core/shader/recompiler/Recompiler.cpp
+@@ -235,7 +235,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
+     translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
+     translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
+     translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
+-    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled;
++    // With hostInterpolationFirst, KHR barycentrics are kept only for pixel shaders that host interpolation cannot lower.
++    const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
++    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst;
+     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
+     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
+     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
+@@ -312,7 +314,18 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
+     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel)) {
+         translateOptions.fragmentShaderBarycentricEnabled = true;
+         program = translator.Translate(decoded, cfg, translateOptions);
+-        program.Metadata().barycentricEmulation = true;
++        program.Metadata().barycentricEmulation = !hostInterpolationFirst;
++        if (hostInterpolationFirst && std::getenv("APS5_LOG_HOST_INTERPOLATION") != nullptr) {
++            std::fprintf(stderr, "[host-interpolation] pixel shader 0x%llx keeps KHR barycentrics (graphics=%d inputNum=%u)\n", static_cast<unsigned long long>(request.shader.codeAddress), request.graphics.has_value() ? 1 : 0, inputInfo.pixel != nullptr ? static_cast<unsigned>(inputInfo.pixel->inputNum) : 0u);
++            char name[96];
++            static std::atomic<unsigned> dumped{0};
++            std::snprintf(name, sizeof(name), "hostinterp_%llx_%u.req", static_cast<unsigned long long>(request.shader.codeAddress), dumped.fetch_add(1u));
++            if (std::FILE* file = std::fopen(name, "wx")) {
++                const auto text = RequestSerializer{}.Serialize(request);
++                std::fwrite(text.data(), 1, text.size(), file);
++                std::fclose(file);
++            }
++        }
+         simplify();
+     }
+ 
+diff --git a/core/shader/recompiler/Recompiler.hpp b/core/shader/recompiler/Recompiler.hpp
+index 23c4658d37..69a0930716 100644
+--- a/core/shader/recompiler/Recompiler.hpp
++++ b/core/shader/recompiler/Recompiler.hpp
+@@ -293,6 +293,7 @@ struct SpirvTarget {
+     bool float32FlushToZero = false;
+     bool waveLdsMemoryBarriers = false;
+     bool float32DenormPreserve = false;
++    bool hostInterpolationFirst = false;
+ };
+ 
+ struct BindingLayout {

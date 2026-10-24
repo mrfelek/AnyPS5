@@ -1,0 +1,66 @@
+diff --git a/core/libs/prx/libSceGameUpdate/Export.cpp b/core/libs/prx/libSceGameUpdate/Export.cpp
+index bee980659..a004dbc8e 100644
+--- a/core/libs/prx/libSceGameUpdate/Export.cpp
++++ b/core/libs/prx/libSceGameUpdate/Export.cpp
+@@ -1,4 +1,5 @@
+ #include <array>
++#include <cstdio>
+ #include <cstdint>
+ #include <cstddef>
+ #include <mutex>
+@@ -64,6 +65,7 @@ static bool hasNonZeroReserved(const GameUpdateCheckParam* param) {
+ extern "C" {
+ 
+ int APS5_VABI sceGameUpdateAbortRequest(int requestId) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateAbortRequest id=0x%x\n", requestId);
+     std::lock_guard lock(stateMutex);
+     Request* request = nullptr;
+     if (int error = checkRequestId(requestId, &request); error != 0) {
+@@ -74,6 +76,7 @@ int APS5_VABI sceGameUpdateAbortRequest(int requestId) {
+ }
+ 
+ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* param, GameUpdateCheckResult* result) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateCheck id=0x%x option=%u\n", requestId, param ? (unsigned)param->option : 0u);
+     if (requestId <= 0) {
+         return SCE_GAME_UPDATE_ERROR_REQUEST_NOT_FOUND;
+     }
+@@ -100,6 +103,7 @@ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* para
+ }
+ 
+ int APS5_VABI sceGameUpdateCreateRequest(void) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateCreateRequest %d\n", 0);
+     std::lock_guard lock(stateMutex);
+     if (!initialized) {
+         return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
+@@ -117,6 +121,7 @@ int APS5_VABI sceGameUpdateCreateRequest(void) {
+ }
+ 
+ int APS5_VABI sceGameUpdateDeleteRequest(int requestId) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateDeleteRequest id=0x%x\n", requestId);
+     std::lock_guard lock(stateMutex);
+     Request* request = nullptr;
+     if (int error = checkRequestId(requestId, &request); error != 0) {
+@@ -127,6 +132,7 @@ int APS5_VABI sceGameUpdateDeleteRequest(int requestId) {
+ }
+ 
+ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, GameUpdateAddcontVersionInfo* info) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateGetAddcontLatestVersion label=%u\n", serviceLabel);
+     (void)serviceLabel;
+     if (info == nullptr) {
+         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
+@@ -144,6 +150,7 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const
+ }
+ 
+ int APS5_VABI sceGameUpdateInitialize(void) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateInitialize %d\n", 0);
+     std::lock_guard lock(stateMutex);
+     if (initialized) {
+         return SCE_GAME_UPDATE_ERROR_ALREADY_INITIALIZED;
+@@ -153,6 +160,7 @@ int APS5_VABI sceGameUpdateInitialize(void) {
+ }
+ 
+ int APS5_VABI sceGameUpdateTerminate(void) {
++    std::fprintf(stderr, "[gameupdate-test] sceGameUpdateTerminate %d\n", 0);
+     std::lock_guard lock(stateMutex);
+     if (!initialized) {
+         return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
