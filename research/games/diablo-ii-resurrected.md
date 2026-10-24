@@ -26,10 +26,12 @@ Run pages: [main menu baseline](https://github.com/mrfelek/AnyPS5/blob/main/perf
 | [#7618](https://github.com/boykopovar/AnyPS5/pull/7618) (mine, stages written-only buffer elements) | Stages only the written elements of buffers the GPU writes, instead of whole buffers. | Gameplay: 55-57 -> 77-85 presents per 10 s (about +40%) for +150-200 MiB VRAM; about 18-21 GB staged in and back per 10 s vs 0.47 GB; 0 refused. Waits on re-review. |
 | [#7814](https://github.com/boykopovar/AnyPS5/pull/7814) (VideoOut output resolution) | Lets you pick a 1080p video output. | No change: the game still renders its passes at 4K. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-1080p.md) |
 
-## Dead ends (tested, no gain)
+## Ruled out, and what to do instead
 
-- **Skipping the indirect draw argument read** (probe): one indirect draw per frame stays on the CPU path and waits about 43 ms for the GPU. Removing the wait (3.6 s per 10 s -> 0) does not raise FPS, because the GPU is the limit. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md), [notes](https://github.com/mrfelek/AnyPS5/blob/main/research/indirect-draw-reads.md)
-- **Draw cache reuse by relocating per-draw pointers** (local experiment): the verifier finds a reused build that differs from a fresh one (8 runs vs 9 in one fragment stage), so it is not correct yet. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-amd-draw-cache-relocation-check.md)
+These are proven not to be the way for this game. Each says which direction to take instead.
+
+- **Skipping the indirect draw argument read** (probe): one indirect draw per frame stays on the CPU path and waits about 43 ms for the GPU. Removing the wait (3.6 s per 10 s -> 0) does not raise FPS, because the GPU is the limit. **Instead:** cut the GPU time of the 4K draw passes first (the float denormal fix above); only then does the indirect read become worth removing. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md), [notes](https://github.com/mrfelek/AnyPS5/blob/main/research/indirect-draw-reads.md)
+- **Draw cache reuse by relocating per-draw pointers** (local experiment): the verifier finds a reused build that differs from a fresh one (8 runs vs 9 in one fragment stage), so it is not correct yet. **Instead:** reuse needs to know exactly which words are pointers (provenance from the recompiler), or the moving ring offsets should be passed as data (dynamic offsets) instead of baked into the shader build. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-amd-draw-cache-relocation-check.md)
 
 ## Known slow spots not fixed yet
 

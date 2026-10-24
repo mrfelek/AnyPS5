@@ -34,10 +34,12 @@ All runs for this game: [game page](https://github.com/mrfelek/AnyPS5/blob/main/
 | [#7844](https://github.com/boykopovar/AnyPS5/pull/7844) (host heap import budget) | Caps how much host memory the import may reserve. | Radeon 780M: no effect; race load stuck at 25% after 15 min in both arms (the cap never applies with a 5658 MiB host heap). |
 | Float denormal flush probe (my fix, not upstream yet) | Only emulates float denormal handling where the GPU differs. | Windows RTX A2000: draw GPU time -10-16% in every phase, presents +0-1% on the title and +4-11% in the garage, because copies dominate. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 4) |
 
-## Dead ends (test switches, not fixes)
+## Ruled out, and what to do instead
 
-- **Skipping the big-buffer flush on the title:** +17% presents (109 vs 93 per 10 s), GPU 50 vs 60 ms. Only an upper bound, because it skips work a scene needs when it reads those images. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-hot-wheels-title-skip-big-flush-ab.md)
-- **Importing the crossing buffer instead of copying it:** the import works (0 CPU copies), but presents do not change; the next reader blocks on the same GPU writer. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-hot-wheels-title-join-crossing-ab.md)
+Test switches that prove which way is not the way. Each says which direction to take instead.
+
+- **Skipping the big-buffer flush on the title:** +17% presents (109 vs 93 per 10 s), GPU 50 vs 60 ms. Only an upper bound, because it skips work a scene needs when it reads those images. **Instead:** flush only the images the compute pass really reads, or keep them on the GPU so nothing has to be flushed. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-hot-wheels-title-skip-big-flush-ab.md)
+- **Importing the crossing buffer instead of copying it:** the import works (0 CPU copies), but presents do not change; the next reader blocks on the same GPU writer. **Instead:** removing waits one at a time only moves them. The GPU result has to stay on the GPU and be read there, instead of going through guest memory ([structural analysis](https://github.com/mrfelek/AnyPS5/blob/main/research/structural-analysis.md), problem 1). [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-hot-wheels-title-join-crossing-ab.md)
 
 ## Black scenery (investigation paused)
 

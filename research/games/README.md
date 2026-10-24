@@ -1,6 +1,6 @@
 # Games
 
-One page per game: where it gets to, what limits its speed, every fix and PR tested on it, dead ends, and what still breaks. Each page links to its run pages in [perf-data](../../perf-data/) and its notes in [research](../).
+One page per game: where it gets to, what limits its speed, every fix and PR tested on it, approaches ruled out (and what to do instead), and what still breaks. Each page links to its run pages in [perf-data](../../perf-data/) and its notes in [research](../).
 
 | Game | Upstream discussion | Page |
 |---|---|---|

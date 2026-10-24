@@ -21,13 +21,13 @@ Linux desktop (Ryzen 9 5950X, RTX 3080 Ti 12 GB, NVIDIA 615.71.09), 2026-10-22..
 
 Dispatch cache in the cinematic: ~14k lookups per 10 s, about half with no entry, only 1.4-1.6k equal; the cache sits at its 8,192-entry limit. Misses come almost entirely from a different layout key (1.09M layout misses vs 22k "same key, data changed").
 
-## What did not help
+## Ruled out
 
 | Change | Result |
 |---|---|
 | `APS5_PIPELINE_DISPATCH=1 APS5_PIPELINE_DMA=1` + 65,536-entry dispatch cache | no gain (11.6 vs 11.8 presents per 10 s); per-dispatch cost rose 600 -> 862 us because the bigger cache validates more entries without hitting |
 | GPU path chain (#9508 descriptor heap -> #7642 image tables on the GPU heap -> #10193 table columns), `APS5_GPU_HEAP=1 APS5_GPU_PATH=1` | slower: 3 vs 14 presents per 10 s in loading, GPU 283 vs 64 ms per frame, draw cache hits 12% vs 85%; vertex SPIR-V 6-9 MB per program (380 guest words -> 1.16M SPIR-V words of address and bounds arithmetic) |
-| Image-table reuse idea | dropped: u2 uses the bindless texture service, and resolveImageTables has 0% of samples there |
+| Image-table reuse idea | ruled out: u2 uses the bindless texture service, and resolveImageTables has 0% of samples there |
 | #7844 (bigger import budget) | not applicable: 0 refused host imports in 13 runs |
 
 GPU path side findings (for #10193): each program is stored twice in the shader disk cache (gpuResolvedImages=1, then the fallback with 0; the "ineligible" memo is in memory only), so the cache grew 23 -> 65 GB in 155 s; mapped cache files are never unmapped (26,741 at the end).

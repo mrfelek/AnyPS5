@@ -1,6 +1,6 @@
 # AnyPS5 research notes
 
-Everything I found while testing PS5 games on [AnyPS5](https://github.com/boykopovar/AnyPS5) on my own machines (Linux desktop with an RTX 3080 Ti, an AMD mini PC with a Radeon 780M, a Windows laptop with an RTX A2000), October 2026. The per-run measurements are in [perf-data](../perf-data/); this folder holds the analysis built on them, dead ends with their numbers, and the test patches used.
+Everything I found while testing PS5 games on [AnyPS5](https://github.com/boykopovar/AnyPS5) on my own machines (Linux desktop with an RTX 3080 Ti, an AMD mini PC with a Radeon 780M, a Windows laptop with an RTX A2000), October 2026. The per-run measurements are in [perf-data](../perf-data/); this folder holds the analysis built on them, approaches ruled out with their numbers (and what to do instead), and the test patches used.
 
 Start with the [structural analysis](structural-analysis.md): it explains why the slow games are slow and ranks what to change. The [day log for 24 October](day-log-2026-10-24.md) walks through every run of the main test day in order: why each one ran, the numbers, and what came out of it. For one game at a time, see the [game pages](games/README.md). Every upstream PR I opened, carried or tested is in [upstream-prs.md](upstream-prs.md), and [how-we-worked.md](how-we-worked.md) explains the method, what went wrong and the lessons.
 
@@ -9,9 +9,9 @@ Start with the [structural analysis](structural-analysis.md): it explains why th
 | Note | Area | Short result |
 |---|---|---|
 | [upstream-prs.md](upstream-prs.md) | all | Every upstream PR I opened, that carries my commits, or that I tested, with state and numbers |
-| [how-we-worked.md](how-we-worked.md) | all | Machines, method, rules, what went wrong, lessons |
-| [patches/](patches/README.md) | all | Every patch and diagnostic, including failed and dropped ones, with the reason |
-| [games/](games/README.md) | each game | One page per game: how far it gets, speed, fixes and PRs tested, dead ends |
+| [how-we-worked.md](how-we-worked.md) | all | Machines, method, rules, mistakes, approaches ruled out and the way to go instead |
+| [patches/](patches/README.md) | all | Every patch and diagnostic, including the ones ruled out, with the reason and the way to go instead |
+| [games/](games/README.md) | each game | One page per game: how far it gets, speed, fixes and PRs tested, approaches ruled out |
 | [day-log-2026-10-24.md](day-log-2026-10-24.md) | all | Every step of the 24 October test day, with numbers and decisions |
 | [structural-analysis.md](structural-analysis.md) | all | Three design problems (GPU results round-trip through guest memory, per-draw rework, one serialized line) plus NVIDIA float emulation; ranked plan; why single-wait fixes give 0 |
 | [menu-image-round-trip.md](menu-image-round-trip.md) | GPU memory model | Slow menus are compute-written images bouncing through guest memory (Hot Wheels title 41 GB up / 35 GB back per 10 s; D2R loading: one array texture split into 90 images) |
