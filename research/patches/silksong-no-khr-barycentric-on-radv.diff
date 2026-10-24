@@ -1,0 +1,13 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp
+index 361aadb06..73075a5b2 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp
+@@ -6,7 +6,7 @@
+ namespace AgcDriver {
+ 
+ inline bool FragmentShaderBarycentricUsable(VkDriverId driver, bool reported) {
+-    return reported && driver != VK_DRIVER_ID_MOLTENVK;
++    return reported && driver != VK_DRIVER_ID_MOLTENVK && driver != VK_DRIVER_ID_MESA_RADV;
+ }
+ 
+ }
