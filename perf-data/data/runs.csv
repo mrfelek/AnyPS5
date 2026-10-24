@@ -27,3 +27,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-21,Sonic Origins Plus,PPSA05325,menu,Linux desktop,572fe318c,baseline,129,,,,,3.0,,,,runs/2026-10-21-sonic-s2-menu-old-build.md
 2026-10-24,Ghost of Yotei,PPSA26344,loading,Linux desktop,local-main,gpu-path-off,14,941,63.7,,,84.6,6943,8162,,runs/2026-10-24-ghost-of-yotei-boot-load-gpu-path-ab.md
 2026-10-24,Ghost of Yotei,PPSA26344,loading,Linux desktop,local-main,gpu-path-on,3,11557,283,,,12.3,709,1109,,runs/2026-10-24-ghost-of-yotei-boot-load-gpu-path-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89,A1,2.6,,330,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89+7844,B1,2.6,,327,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89,A2,2.6,,327,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
+2026-10-24,Hot Wheels Infinite Rush,PPSA22408,race load,AMD mini PC,137a8fab89+7844,B2,2.6,,325,,,,,,2.0,runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md
