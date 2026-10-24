@@ -12,5 +12,6 @@ Upstream discussion: [D#6895](https://github.com/boykopovar/AnyPS5/discussions/6
 | Title screen | 2026-10-24 | Linux desktop | `3ca5b17655` | import the read-back buffer | copy gone, wait moves, presents unchanged | [run](../runs/2026-10-24-hot-wheels-title-join-crossing-ab.md) |
 | Boot + race load | 2026-10-24 | Linux desktop | `3ca5b17655` | heap copy trace | writable atomic whole-heap binds skip the import and copy the heap | [run](../runs/2026-10-24-hot-wheels-heap-copy-trace.md) |
 | Race load | 2026-10-24 | AMD mini PC | `137a8fab89` | host heap out of import budget A/B | no effect; 25% loaded after 15 min in all arms, GPU 3% busy | [run](../runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md) |
+| Title, menu, garage | 2026-10-24 | Windows laptop | `6d0139cd33` | f32 denormal flush probe A/B | draw GPU time -10-16%, garage presents +4-11%, title unchanged | [run](../runs/2026-10-24-d2r-main-menu-f32-flush-ab.md#run-4-same-probe-on-windows-laptop-rtx-a2000-driver-61060-hot-wheels-infinite-rush-ppsa22408) |
 
 AI-assisted. Tested by me on my own machine.
