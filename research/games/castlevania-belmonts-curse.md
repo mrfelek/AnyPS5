@@ -20,8 +20,8 @@ Everything I tested on this game, in one place. Upstream discussion: [D#5832](ht
 | jemalloc as the game's allocator (local) | Replaces the guest heap allocator with jemalloc. | +18% (posted earlier in this thread). |
 | mimalloc on Linux (local branch, not a PR) | Lets Linux use the `APS5_MIMALLOC` switch that Windows already has (#6067). | +15-22% on two games, but the first run did not shut down cleanly. Needs a re-measure, because the change to when the game's own allocator is used (#7897) came after. |
 | `APS5_MIMALLOC` on Windows | Existing switch. | Hangs on loading (2 of 2 starts). |
-| Per-object pointer relocation (local) | Relocates the moving per-object pointers so draws hit the cache. | +25-30%, but not safe in general. Needs pointer provenance. |
-| [#6539](https://github.com/boykopovar/AnyPS5/pull/6539) (forwards user words), [#5404](https://github.com/boykopovar/AnyPS5/pull/5404) (bypasses the draw cache under 5% hits), `APS5_RELOCATE_VERTEX_FETCH` | Draw cache changes. | No gain here. |
+| Per-object pointer relocation (local) | Relocates the moving per-object pointers so draws hit the cache. | +25-30%, but guessing which words are pointers is not safe (wrong draws on Astro Bot). **Instead:** pointer provenance from the recompiler. |
+| [#6539](https://github.com/boykopovar/AnyPS5/pull/6539) (forwards user words), [#5404](https://github.com/boykopovar/AnyPS5/pull/5404) (bypasses the draw cache under 5% hits), `APS5_RELOCATE_VERTEX_FETCH` | Draw cache changes. | Ruled out here: per-draw buffer addresses still change, so draws still miss. **Instead:** pointer provenance from the recompiler, or ring offsets passed as data. |
 | Float denormal flush probe (my fix, not upstream yet), Windows laptop | Only emulates float denormal handling where the GPU differs. | Inconclusive: with the fix, one start stayed on the black loading screen for about 9 minutes after New Game and was stopped; the second was stopped before New Game. Needs a rerun. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 4) |
 
 AI-assisted. Tested by me on my own machine.

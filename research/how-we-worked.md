@@ -1,6 +1,6 @@
 # How we worked
 
-How the measurements and fixes in this repository were made, what went wrong, and what I would do the same or differently. Written so others can judge whether the approach was right.
+How the measurements and fixes in this repository were made, which approaches the data ruled out, where our own process slipped, and what I would do the same or differently. Written so others can judge whether the approach was right.
 
 ## Who and with what
 
@@ -15,9 +15,24 @@ How the measurements and fixes in this repository were made, what went wrong, an
 - **Correctness of cache changes:** the verify modes (`APS5_VERIFY_DRAW_ENTRIES`, `APS5_VERIFY_DRAW_RECIPE`, `APS5_VERIFY_DRAW_DATA_HITS`) on at least three games. Astro Bot once caught wrong cached draws that Castlevania and Sonic missed.
 - **Share runs:** one run per game and scene, with every work stream's trace switches folded into it, instead of each stream re-running the game.
 - **Before posting upstream:** look for duplicates in open **and closed** PRs and in contributors' branches; read every comment, review and edit on the thread; describe each PR in words; put the game title next to every game ID; end with one plain AI line.
-- **Everything goes to this fork:** each run gets a page that is never renamed (upstream posts link to it), plus the analysis, the dead ends and the patches.
+- **Everything goes to this fork:** each run gets a page that is never renamed (upstream posts link to it), plus the analysis, the approaches ruled out and the patches.
 
-## What went wrong
+## Approaches ruled out, and the way to go instead
+
+These are not failures: each one is measured proof that a direction is not the way, so nobody has to try it again.
+
+| Approach | What the data showed | Way to go instead |
+|---|---|---|
+| Removing waits one at a time (Hot Wheels title: importing the crossing buffer, skipping big-buffer flushes) | Each removed wait moved to the next reader of the same GPU result; the skip gives +17% only by dropping needed work | Keep GPU results on the GPU and read them there, instead of a round trip through guest memory |
+| Moving work to the GPU path while another limit sits right behind it (D2R indirect draws, #7591; skipping the indirect read) | GPU-path draws 0 -> 3,021 per 10 s, FPS unchanged; removing the 3.6 s wait, FPS unchanged | Find the real limit first with the full metric set; on D2R it is the GPU time of 4K draw passes (float denormal fix: +26%) |
+| More draw cache hits through relocation (Sonic, Castlevania, D2R) | Hits rose to about 50% with no FPS gain (a hit still costs about 16 us); guessed pointers gave wrong draws; the relocation prototype fails the verifier | Pointer provenance from the recompiler, ring offsets as data, and a cheaper hit path |
+| The GPU path chain on Ghost of Yotei (#9508 -> #7642 -> #10193) | Slower in loading; huge vertex shaders; cache stores everything twice | Fix its cache keys and shader size first; for speed, attack the dispatch-forced drains |
+| A bigger dispatch cache (Yotei) | Per-dispatch cost went up | Stable cache keys, not more entries |
+| Turning off fragment barycentrics on RADV (Silksong seam) | Fixed the seam, broke two other games | Host interpolation first, only for shaders that can use it (#10547) |
+
+The [structural analysis](structural-analysis.md) ties these together into three design problems and a ranked plan. Every patch behind them is in [patches/](patches/README.md).
+
+## Where our own process slipped
 
 | What happened | Cost | What I changed |
 |---|---|---|

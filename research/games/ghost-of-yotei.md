@@ -29,12 +29,12 @@ Full analysis: [ghost-of-yotei-speed.md](https://github.com/mrfelek/AnyPS5/blob/
 | `APS5_PIPELINE_JOURNAL_MAX_MIB=4096` (setting) | The pipeline journal hits its 1024 MiB default cap, so later giant shaders are never recorded and get compiled again next launch. | Use it for this game. |
 | Blend fix (my patch, not a PR) | See the table above. | Patch only. |
 
-## Dead ends
+## Ruled out, and what to do instead
 
-- **GPU path chain** (#9508 descriptor heap -> #7642 image tables on the GPU heap -> #10193 table columns, `APS5_GPU_HEAP=1 APS5_GPU_PATH=1`): slower in loading, 3 vs 14 presents per 10 s, GPU 283 vs 64 ms per frame, draw cache hits 12% vs 85%; vertex SPIR-V reaches 6-9 MB per program. Its shader cache also stores every program twice (reported on #10193).
-- **Bigger dispatch cache with pipelined dispatch/DMA** (`APS5_PIPELINE_DISPATCH=1 APS5_PIPELINE_DMA=1`, 65,536 entries): no gain, per-dispatch cost went up (600 -> 862 us).
-- **Staging PRs #8104, #9287, #9289** (Celegans12, cheaper staged copies) on the logo phase: no measurable difference.
-- **Image-table reuse idea:** dropped; linux-best-u2 uses the bindless texture service, where that code takes 0% of the time.
+- **GPU path chain** (#9508 descriptor heap -> #7642 image tables on the GPU heap -> #10193 table columns, `APS5_GPU_HEAP=1 APS5_GPU_PATH=1`): slower in loading, 3 vs 14 presents per 10 s, GPU 283 vs 64 ms per frame, draw cache hits 12% vs 85%; vertex SPIR-V reaches 6-9 MB per program. Its shader cache also stores every program twice (reported on #10193). **Instead:** fix its cache keys and vertex shader size first; for speed, the target is the dispatch-forced drains and the guest-memory round trip.
+- **Bigger dispatch cache with pipelined dispatch/DMA** (`APS5_PIPELINE_DISPATCH=1 APS5_PIPELINE_DMA=1`, 65,536 entries): no gain, per-dispatch cost went up (600 -> 862 us). **Instead:** make the dispatch cache keys stable (almost all misses are a different layout key), not the cache bigger.
+- **Staging PRs #8104, #9287, #9289** (Celegans12, cheaper staged copies) on the logo phase: no measurable difference. **Instead:** the waits there are async-queue dispatches reading results just written by the GPU; keep those results on the GPU.
+- **Image-table reuse idea:** ruled out; linux-best-u2 uses the bindless texture service, where that code takes 0% of the time.
 
 ## Known problems
 

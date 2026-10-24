@@ -22,7 +22,7 @@ Draw cost per packet: precheck 0.9, decode 2.1, capture 4.1, recompile 4.6, vect
 | Change | What it does | Result |
 |---|---|---|
 | One image for a 2D surface and its one-layer array (my fork branch `fix/one-layer-storage-share`) | Shares one image instead of keeping an alias copy. Same idea as NahuelGenchi's `perf/agc-share-one-slice-image` (closed, not in main). | Removes about 7,000 alias copies per 10 s and the broken help glyphs, GPU -4-6 ms, about +5% FPS. Not upstreamed. |
-| Vertex fetch relocation (my fork branch `perf/vertex-fetch-relocation`) | Relocates vertex fetch pointers so draws hit the cache. | About 50% cache hits, 0 mismatches, but no FPS gain: a hit still costs about 16 us. |
+| Vertex fetch relocation (my fork branch `perf/vertex-fetch-relocation`) | Relocates vertex fetch pointers so draws hit the cache. | About 50% cache hits, 0 mismatches, but no FPS gain: a hit still costs about 16 us. Ruled out as the main lever. **Instead:** make the hit path in the committer and draw worker cheaper. |
 | Open PRs aimed at the same per-draw cost (not yet measured here) | [#9508](https://github.com/boykopovar/AnyPS5/pull/9508) (Raghav314, GPU descriptor heap: skips the per-draw descriptor set rebuild) and [#9012](https://github.com/boykopovar/AnyPS5/pull/9012) (SP4C3B4R-8, audits a cached template only after the host-import set changed). | Each covers part of the 16.5 us per draw in the committer; neither touches the draw cache misses. [notes](https://github.com/mrfelek/AnyPS5/blob/main/research/draw-committer-cost.md) |
 
 Planned, not run yet: an A/B of [#10668](https://github.com/boykopovar/AnyPS5/pull/10668) (meh7an, skips repeated fills; the PR says this menu zero-fills about 68 MiB per frame).

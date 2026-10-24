@@ -13,7 +13,7 @@ Everything I tested on this game, in one place. Upstream discussion: [D#726](htt
 - The seam comes from the final full-screen pass (6 indices, plain vertex + pixel shader). Its pixel shader interpolation was lowered to `PerVertexKHR` + `gl_BaryCoordKHR`, and on RADV the per-vertex order disagrees with the barycentrics on the second triangle (most likely a Mesa bug).
 - **Fix: [#10547](https://github.com/boykopovar/AnyPS5/pull/10547)** (mine, prefers host interpolation on RADV). Pixel shaders are first translated with normal host interpolation; only shaders that cannot use it fall back to the native barycentric path. `APS5_NO_HOST_INTERPOLATION_FIRST=1` turns it off. With it the 780M shows no seam in the menu or tut_01, and Diablo II Resurrected and Hot Wheels still run. GPU tests all pass, no new validation errors. Approved, waits merge.
 - Ruled out on the way: `APS5_STORE_AT_FLIP`, `APS5_NO_RECT_INDIRECT`, `APS5_NO_GPU_INDIRECT_DRAW`, `APS5_NO_DRAW_INPUTS_IN_PLACE`, validation errors, the rect-list 4th corner, provoking vertex first.
-- A broader fix (turning off fragment barycentrics on RADV) also removed the seam but broke Diablo II Resurrected (a pixel shader needs barycentrics without a vertex shader) and Hot Wheels (mesh emulation over 32 KiB), so it was dropped.
+- A broader fix (turning off fragment barycentrics on RADV) also removed the seam but broke Diablo II Resurrected (a pixel shader needs barycentrics without a vertex shader) and Hot Wheels (mesh emulation over 32 KiB), so it is ruled out. The narrower change above (host interpolation first) is the way.
 
 ## Other tests
 
