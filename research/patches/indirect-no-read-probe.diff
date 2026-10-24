@@ -1,0 +1,20 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+index 175c487d2..9269a4a7c 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+@@ -406,6 +406,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
+         const auto known = cpuIndirectPrograms.find(programs.front().binary.codeAddress);
+         if (known != cpuIndirectPrograms.end() && known->second) {
+             const auto& indirect = *drawParameters.indirect;
++            static const bool probeNoRead = std::getenv("APS5_PROBE_INDIRECT_NO_READ") != nullptr;
++            if (probeNoRead) {
++                static std::atomic<std::uint64_t> probed{0};
++                const auto n = ++probed;
++                if (n <= 4 || n % 1000 == 0) std::fprintf(stderr, "[probe] indirect no-read skip %llu: program 0x%llx args 0x%llx count %u\n", static_cast<unsigned long long>(n), static_cast<unsigned long long>(programs.front().binary.codeAddress), static_cast<unsigned long long>(indirect.arguments), indirect.count);
++                Graphics::CountEmptyIndirectDraw(0.0);
++                timing.Mark("empty_indirect_skipped");
++                return drawn();
++            }
+             recordQueuedLabelsBeforeRead(submission.queue);
+             const auto readStart = std::chrono::steady_clock::now();
+             const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);

@@ -1,0 +1,155 @@
+From f463153aba65d1580024623b0905c30b7207b8c8 Mon Sep 17 00:00:00 2001
+From: mrfelek <17274927+mrfelek@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 17:36:51 +0000
+Subject: [PATCH 1/2] perf(agc): probe the f32 denormal flush on NVIDIA's
+ proprietary driver
+
+The driver declares no shaderDenormFlushToZeroFloat32, so every f32 add, mul and fma kept the software flush. Run the same probe as on MoltenVK and use the driver's default handling when it matches the emulated flush.
+---
+ .../libSceAgcDriver/Execution/include/Float32FlushControl.hpp  | 2 +-
+ core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp    | 3 ++-
+ docs/dev/ARCHITECTURE.md                                       | 2 +-
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp
+index 0d93c2c2a4..3e6af23dcb 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp
+@@ -12,7 +12,7 @@ struct Float32FlushControl {
+ 
+ inline Float32FlushControl Float32FlushControlFor(VkDriverId driver, VkBool32 flushToZero, VkShaderFloatControlsIndependence independence) {
+     const bool declared = flushToZero == VK_TRUE && independence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE;
+-    return {declared || driver == VK_DRIVER_ID_MOLTENVK, declared};
++    return {declared || driver == VK_DRIVER_ID_MOLTENVK || driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY, declared};
+ }
+ 
+ }
+diff --git a/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp b/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp
+index f51d28a2bf..55dc9f5ba9 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/Float32FlushControl.cpp
+@@ -17,7 +17,8 @@ constexpr Case Cases[]{
+     {VK_DRIVER_ID_MESA_RADV, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, true, true},
+     {VK_DRIVER_ID_MESA_RADV, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY, true, true},
+     {VK_DRIVER_ID_MESA_RADV, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE, false, false},
+-    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_FALSE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, false, false},
++    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_FALSE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, true, false},
++    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL, true, true},
+     {VK_DRIVER_ID_AMD_PROPRIETARY, VK_TRUE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY, true, true},
+     {static_cast<VkDriverId>(0), VK_FALSE, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE, false, false},
+ };
+diff --git a/docs/dev/ARCHITECTURE.md b/docs/dev/ARCHITECTURE.md
+index 6c47cfa197..43f18a27b1 100644
+--- a/docs/dev/ARCHITECTURE.md
++++ b/docs/dev/ARCHITECTURE.md
+@@ -210,4 +210,4 @@ The register layout and instruction contract follow [AMD RDNA2 ISA sections 5.8
+ 
+ ### Hardware f32 denormal flush
+ 
+-A device with `shaderDenormFlushToZeroFloat32` and an f32 denormal behaviour independent of the other widths runs a probe when it is created (`ProbeFloat32FlushToZero`): the three programs of `agc_driver_f32_denormal_flush` (one mixed module with every flushing instruction, and the tiny-product programs), with no float mode, with `IEEE_MODE` off and with it on, each compiled twice, with the emulated flush and with `DenormFlushToZero 32` declared. When every result matches, `SpirvTarget::float32FlushToZero` is set: every module declares the mode, and `v_add_f32`, `v_sub_f32`, `v_subrev_f32`, `v_mul_f32`, the fused `v_fma_f32`, `v_fmac_f32`, `v_fmamk_f32` and `v_fmaak_f32`, `v_floor_f32` and `v_ceil_f32` drop their software flush in the default rounding mode. VOP3P forms, the other rounding modes and the other instructions keep the emulation. `APS5_NO_HW_F32_FLUSH` skips the probe.
++A device with `shaderDenormFlushToZeroFloat32` and an f32 denormal behaviour independent of the other widths, and MoltenVK and NVIDIA's proprietary driver, which declare no f32 flush, run a probe when the device is created (`ProbeFloat32FlushToZero`): the three programs of `agc_driver_f32_denormal_flush` (one mixed module with every flushing instruction, and the tiny-product programs), with no float mode, with `IEEE_MODE` off and with it on, each compiled twice, with the emulated flush and with `DenormFlushToZero 32` declared (on a device that declares no f32 flush, with no execution mode, so the driver's default f32 denormal handling is what is measured). When every result matches, `SpirvTarget::float32FlushToZero` is set: every module declares the mode where the device has it, and `v_add_f32`, `v_sub_f32`, `v_subrev_f32`, `v_mul_f32`, the fused `v_fma_f32`, `v_fmac_f32`, `v_fmamk_f32` and `v_fmaak_f32`, `v_floor_f32` and `v_ceil_f32` drop their software flush in the default rounding mode. VOP3P forms, the other rounding modes and the other instructions keep the emulation. `APS5_NO_HW_F32_FLUSH` skips the probe.
+-- 
+2.43.0
+
+
+From 222d2545af7c70017aeecc753dd19b0a33db7e02 Mon Sep 17 00:00:00 2001
+From: mrfelek <17274927+mrfelek@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 19:25:50 +0000
+Subject: [PATCH 2/2] fix(shader): keep the f32 floor and ceil flush where the
+ device flushes by default
+
+NVIDIA's proprietary driver flushes f32 add, multiply and fma denormals by default but not the inputs of floor and ceil, so its startup probe failed only on those two. Drop their software flush only where the device declares DenormFlushToZero 32.
+---
+ core/shader/recompiler/Recompiler.cpp                         | 1 +
+ .../Translation/include/Translation/InstructionTranslator.hpp | 1 +
+ .../Translation/include/Translation/TranslationContext.hpp    | 2 ++
+ .../recompiler/Translation/src/InstructionTranslator.cpp      | 1 +
+ core/shader/recompiler/Translation/src/VectorInstructions.cpp | 4 ++--
+ docs/dev/ARCHITECTURE.md                                      | 2 +-
+ 6 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/core/shader/recompiler/Recompiler.cpp b/core/shader/recompiler/Recompiler.cpp
+index fad7606ef9..56b3121d6f 100644
+--- a/core/shader/recompiler/Recompiler.cpp
++++ b/core/shader/recompiler/Recompiler.cpp
+@@ -245,6 +245,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
+     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
+     translateOptions.floatMode = request.context.floatMode;
+     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
++    translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
+     translateOptions.inputInfo = inputInfo;
+     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
+ 
+diff --git a/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp b/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp
+index 21f6bc7e0e..b72d41b050 100644
+--- a/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp
++++ b/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp
+@@ -36,6 +36,7 @@ struct TranslateOptions {
+     bool interpolationFunctions = false;
+     bool nativeFloat16 = false;
+     bool float32FlushToZero = false;
++    bool float32FlushDeclared = false;
+     bool float32DenormPreserve = false;
+     bool gcnLegacyVertexInputs = false;
+     std::optional<ShaderFloatMode> floatMode;
+diff --git a/core/shader/recompiler/Translation/include/Translation/TranslationContext.hpp b/core/shader/recompiler/Translation/include/Translation/TranslationContext.hpp
+index 00da5a7db5..f51e2f016b 100644
+--- a/core/shader/recompiler/Translation/include/Translation/TranslationContext.hpp
++++ b/core/shader/recompiler/Translation/include/Translation/TranslationContext.hpp
+@@ -27,6 +27,7 @@ public:
+     void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
+     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
+     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
++    void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
+     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
+     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
+     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+@@ -388,6 +389,7 @@ private:
+     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
+     std::uint32_t f32DenormalFlush = 0u;
+     bool float32FlushToZero = false;
++    bool float32FlushDeclared = false;
+     bool float32DenormPreserve = false;
+     std::uint32_t currentProgramCounter = 0;
+     std::uint32_t currentVectorLimit = 1;
+diff --git a/core/shader/recompiler/Translation/src/InstructionTranslator.cpp b/core/shader/recompiler/Translation/src/InstructionTranslator.cpp
+index 08393a3942..b8e1f33338 100644
+--- a/core/shader/recompiler/Translation/src/InstructionTranslator.cpp
++++ b/core/shader/recompiler/Translation/src/InstructionTranslator.cpp
+@@ -601,6 +601,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
+         context.SetNativeFloat16(options.nativeFloat16);
+         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
+         context.SetFloat32FlushToZero(options.float32FlushToZero);
++        context.SetFloat32FlushDeclared(options.float32FlushDeclared);
+         context.SetEntryRounding(entryRounding.at(cfgBlock.id));
+         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
+             const auto& instruction = decoded.instructions[index];
+diff --git a/core/shader/recompiler/Translation/src/VectorInstructions.cpp b/core/shader/recompiler/Translation/src/VectorInstructions.cpp
+index 880e6b61ed..7a1fc3ff98 100644
+--- a/core/shader/recompiler/Translation/src/VectorInstructions.cpp
++++ b/core/shader/recompiler/Translation/src/VectorInstructions.cpp
+@@ -30,9 +30,9 @@ bool TranslationContext::flushesInHardware(const RdnaInstruction& inst) const {
+     case RdnaOpcode::VAddF32:
+     case RdnaOpcode::VSubF32:
+     case RdnaOpcode::VSubrevF32:
+-    case RdnaOpcode::VMulF32:
++    case RdnaOpcode::VMulF32: return true;
+     case RdnaOpcode::VFloorF32:
+-    case RdnaOpcode::VCeilF32: return true;
++    case RdnaOpcode::VCeilF32: return float32FlushDeclared;
+     case RdnaOpcode::VFmaF32:
+     case RdnaOpcode::VMacF32:
+     case RdnaOpcode::VMadmkF32:
+diff --git a/docs/dev/ARCHITECTURE.md b/docs/dev/ARCHITECTURE.md
+index 43f18a27b1..1642e72448 100644
+--- a/docs/dev/ARCHITECTURE.md
++++ b/docs/dev/ARCHITECTURE.md
+@@ -210,4 +210,4 @@ The register layout and instruction contract follow [AMD RDNA2 ISA sections 5.8
+ 
+ ### Hardware f32 denormal flush
+ 
+-A device with `shaderDenormFlushToZeroFloat32` and an f32 denormal behaviour independent of the other widths, and MoltenVK and NVIDIA's proprietary driver, which declare no f32 flush, run a probe when the device is created (`ProbeFloat32FlushToZero`): the three programs of `agc_driver_f32_denormal_flush` (one mixed module with every flushing instruction, and the tiny-product programs), with no float mode, with `IEEE_MODE` off and with it on, each compiled twice, with the emulated flush and with `DenormFlushToZero 32` declared (on a device that declares no f32 flush, with no execution mode, so the driver's default f32 denormal handling is what is measured). When every result matches, `SpirvTarget::float32FlushToZero` is set: every module declares the mode where the device has it, and `v_add_f32`, `v_sub_f32`, `v_subrev_f32`, `v_mul_f32`, the fused `v_fma_f32`, `v_fmac_f32`, `v_fmamk_f32` and `v_fmaak_f32`, `v_floor_f32` and `v_ceil_f32` drop their software flush in the default rounding mode. VOP3P forms, the other rounding modes and the other instructions keep the emulation. `APS5_NO_HW_F32_FLUSH` skips the probe.
++A device with `shaderDenormFlushToZeroFloat32` and an f32 denormal behaviour independent of the other widths, and MoltenVK and NVIDIA's proprietary driver, which declare no f32 flush, run a probe when the device is created (`ProbeFloat32FlushToZero`): the three programs of `agc_driver_f32_denormal_flush` (one mixed module with every flushing instruction, and the tiny-product programs), with no float mode, with `IEEE_MODE` off and with it on, each compiled twice, with the emulated flush and with `DenormFlushToZero 32` declared (on a device that declares no f32 flush, with no execution mode, so the driver's default f32 denormal handling is what is measured). When every result matches, `SpirvTarget::float32FlushToZero` is set: every module declares the mode where the device has it, and `v_add_f32`, `v_sub_f32`, `v_subrev_f32`, `v_mul_f32`, the fused `v_fma_f32`, `v_fmac_f32`, `v_fmamk_f32` and `v_fmaak_f32` drop their software flush in the default rounding mode, and `v_floor_f32` and `v_ceil_f32` drop it only where the device declares the mode (NVIDIA's default handling does not flush their inputs). VOP3P forms, the other rounding modes and the other instructions keep the emulation. `APS5_NO_HW_F32_FLUSH` skips the probe.
+-- 
+2.43.0
+

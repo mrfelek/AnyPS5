@@ -1,0 +1,44 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
+index b87e5ba1a8..d9fa9c7fd5 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
+@@ -2200,6 +2200,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
+         state->scaler = std::make_unique<PresentationScaler>(graphicsContext(), VK_FORMAT_B8G8R8A8_UNORM, state->surfaceFormat);
+         state->presentation = std::make_unique<PresentationPass>(graphicsContext(), state->presentSlots.size());
+     }
++    // TEST-ONLY (GPU time thread): APS5_TEST_F32_FLUSH_ASSUMED skips the emulated f32 denormal
++    // flush, as if the device flushed in hardware, to measure what the emulation costs.
++    if (std::getenv("APS5_TEST_F32_FLUSH_ASSUMED") != nullptr) {
++        state->float32FlushToZero = true;
++        std::fprintf(stderr, "[float-controls] f32 denormal flush: assumed in hardware (test switch)\n");
++    } else
+     if (state->float32FlushToZeroCandidate) {
+         const auto probeStart = std::chrono::steady_clock::now();
+         state->probingFloatControls = true;
+diff --git a/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp b/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
+index b9f6c7b5d5..ceae349ac7 100644
+--- a/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
++++ b/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
+@@ -8,6 +8,7 @@
+ #include <spirv/unified1/spirv.hpp>
+ #include "PipelineSpecialization.hpp"
+ #include <algorithm>
++#include <cstdlib>
+ #include <array>
+ #include <bit>
+ #include <limits>
+@@ -1433,6 +1434,14 @@ std::uint32_t EmitClassMaskF32(SpirvEmitterState& state, std::uint32_t value, st
+ }
+ 
+ std::uint32_t EmitMinMaxF32Value(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, bool maxValue) {
++    // TEST-ONLY (GPU time thread): APS5_TEST_NATIVE_FMINMAX takes the host NMin/NMax instead of the
++    // bit-exact signed-zero and NaN handling, to measure what it costs.
++    static const bool nativeMinMax = std::getenv("APS5_TEST_NATIVE_FMINMAX") != nullptr;
++    if (nativeMinMax) {
++        const auto result = state.module.AllocateId();
++        state.module.AddFunction(spv::OpExtInst, TypeF32(state), result, GlslStd450(state), maxValue ? GLSLstd450NMax : GLSLstd450NMin, lhs, rhs);
++        return result;
++    }
+     const auto lhsClass = EmitClassifyF32(state, lhs);
+     const auto rhsClass = EmitClassifyF32(state, rhs);
+ 

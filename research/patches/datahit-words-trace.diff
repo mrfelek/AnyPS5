@@ -1,0 +1,25 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+index 175c487d2..c4993de67 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+@@ -379,6 +379,20 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
+             ReadUserWords(queue, program, false);
+             if (program.merged) InitializeMerged(queue, program, program.mergedPointer, program.mergedPointerRequired, false);
+         }
++        static const char* const datahitAfter = std::getenv("APS5_TMP_DATAHIT_WORDS");
++        static const auto datahitStarted = std::chrono::steady_clock::now();
++        if (datahitAfter != nullptr && std::chrono::duration<double>(std::chrono::steady_clock::now() - datahitStarted).count() >= std::atof(datahitAfter)) {
++            static std::atomic<std::uint64_t> printed{0};
++            const auto& before = dataEntry->decode->programs;
++            for (std::size_t p = 0; p < refreshed->programs.size() && p < before.size(); ++p) {
++                const auto& now = refreshed->programs[p].userData;
++                const auto& old = before[p].userData;
++                for (std::size_t w = 0; w < now.size() && w < old.size(); ++w) {
++                    if (now[w] == old[w] || printed.fetch_add(1, std::memory_order_relaxed) >= 4000) continue;
++                    std::fprintf(stderr, "[tmp-datahit] shape 0x%llx prog %zu code 0x%llx stage %u word %zu old 0x%08x new 0x%08x delta %lld\n", static_cast<unsigned long long>(shapeKey), p, static_cast<unsigned long long>(refreshed->programs[p].binary.codeAddress), static_cast<unsigned>(refreshed->programs[p].binary.stage), w, old[w], now[w], static_cast<long long>(now[w]) - static_cast<long long>(old[w]));
++                }
++            }
++        }
+         if (verifyDrawDataHits()) {
+             const auto full = decodeDraw(queue, submission, localDevice->graphicsContext());
+             if (!sameDecode(*refreshed, *full)) {

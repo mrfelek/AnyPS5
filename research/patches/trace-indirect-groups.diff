@@ -1,0 +1,7 @@
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
+@@ decideIndirect: after "record.cpuReason = outcome.cpuReason;" @@
+     record.cpuArguments = arguments;
+     record.cpuReason = outcome.cpuReason;
++    static const bool traceGroups = std::getenv("APS5_HW_TRACE_GROUPS") != nullptr;
++    if (traceGroups) std::fprintf(stderr, "[hwgroups] program 0x%llx args 0x%llx groups %ux%ux%u reason %d\n", static_cast<unsigned long long>(record.programAddress), static_cast<unsigned long long>(arguments), record.x, record.y, record.z, outcome.cpuReason);

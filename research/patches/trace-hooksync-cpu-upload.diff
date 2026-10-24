@@ -1,0 +1,44 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+index db0d8b761..cf213aa3f 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+@@ -5130,6 +5130,19 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
+         readBytes += region.snapshot.size();
+     }
+     region.snapshot.clear();
++    static const std::uint64_t traceCpuKiB = [] {
++        const char* text = std::getenv("APS5_TRACE_CPU_UPLOAD_KIB");
++        return text != nullptr ? std::strtoull(text, nullptr, 0) : ~0ull;
++    }();
++    if (bytes >= traceCpuKiB * 1024u) {
++        std::vector<RegisteredPiece> pieces;
++        const bool covered = RegisteredReadableCovers(region.begin, static_cast<std::size_t>(bytes), &pieces);
++        const auto* existing = ExistingHostImportFor(context, region.begin, static_cast<std::size_t>(bytes));
++        std::fprintf(stderr, "[cpu-upload] 0x%llx+0x%llx writable=%d hostBacked=%d sparse=%d addressable=%d read %.0f us import %s alignment 0x%llx registered %d:", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(bytes), region.writable ? 1 : 0, region.hostBacked ? 1 : 0, region.sparse ? 1 : 0, addressable ? 1 : 0, std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - readStart).count(), existing != nullptr ? "yes" : "no", static_cast<unsigned long long>(context.hostImportAlignment), covered ? 1 : 0);
++        for (const auto& piece : pieces) std::fprintf(stderr, " [0x%llx+0x%llx w%d gpu%d]", static_cast<unsigned long long>(piece.address), static_cast<unsigned long long>(piece.bytes), piece.writable ? 1 : 0, piece.gpu ? 1 : 0);
++        if (existing != nullptr) std::fprintf(stderr, " import 0x%llx+0x%llx", static_cast<unsigned long long>(existing->base), static_cast<unsigned long long>(existing->bytes));
++        std::fprintf(stderr, "\n");
++    }
+     if (profile) readUs.fetch_add(microsecondsSince(readStart), std::memory_order_relaxed);
+     if (profile) {
+         static AgcDriver::Mutex reasonsMutex;
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp
+index dab5468c7..30b61397a 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp
+@@ -863,6 +863,15 @@ public:
+         }();
+         ++(totals.outcomes.*outcome);
+         ++(stats.outcomes.*outcome);
++        static const double traceMs = [] {
++            const char* text = std::getenv("APS5_TRACE_HOOKSYNC_MS");
++            return text != nullptr ? std::atof(text) : -1.0;
++        }();
++        if (traceMs >= 0 && ms >= traceMs) {
++            std::fprintf(stderr, "[hooksync-trace] q0x%x %s %s access 0x%llx+0x%zx waited %.2f ms frames +0x%llx/+0x%llx/+0x%llx", key.queue, PacketName(key.opcode).c_str(), GuestMemory::ReadSiteName(key.site), static_cast<unsigned long long>(address), bytes, ms, static_cast<unsigned long long>(key.frames[0]), static_cast<unsigned long long>(key.frames[1]), static_cast<unsigned long long>(key.frames[2]));
++            if (info.has_value()) std::fprintf(stderr, " writer range 0x%llx+0x%llx serial %llu open %d signaled %d batches %zu\n", static_cast<unsigned long long>(info->rangeBegin), static_cast<unsigned long long>(info->rangeEnd - info->rangeBegin), static_cast<unsigned long long>(info->serial), info->open ? 1 : 0, info->signaled ? 1 : 0, info->batchesToFinish);
++            else std::fprintf(stderr, " no writer found\n");
++        }
+         if (now - stats.lastReport > std::chrono::seconds(10)) ReportHookSyncs(stats);
+     }
+     HookSyncScope(const HookSyncScope&) = delete;

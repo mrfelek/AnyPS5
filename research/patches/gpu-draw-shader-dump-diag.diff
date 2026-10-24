@@ -1,0 +1,39 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
+index 288ca494b9..0a56aa5681 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
+@@ -6,6 +6,9 @@
+ #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+ #include "Optimization/ResourceProgram.hpp"
+ #include <algorithm>
++#include <vector>
++#include <mutex>
++#include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ #include <span>
+@@ -68,6 +71,24 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
+         if (matched[j] != nullptr && !recompiled[j] && (drawHit || j < i)) memory.insert(memory.end(), matchedRegions[j].begin(), matchedRegions[j].end());
+     }
+     request.context.memory = memory;
++    // TEST-ONLY diag (GPU time thread): dump the draw stages listed in APS5_DUMP_DRAW_SHADERS (hex code
++    // addresses, comma separated) once each, for agc_shader_replay.
++    if (const char* listed = std::getenv("APS5_DUMP_DRAW_SHADERS"); listed != nullptr) {
++        char hex[24];
++        std::snprintf(hex, sizeof(hex), "%llx", static_cast<unsigned long long>(program.binary.codeAddress));
++        static std::mutex dumpedMutex;
++        static std::vector<std::uint64_t> dumped;
++        std::lock_guard dumpedLock(dumpedMutex);
++        if (std::strstr(listed, hex) != nullptr && std::find(dumped.begin(), dumped.end(), program.binary.codeAddress) == dumped.end()) {
++            dumped.push_back(program.binary.codeAddress);
++            try {
++                const auto name = dumpRequest(program.binary.codeAddress, request, "_draw");
++                std::fprintf(stderr, "[drawdump] 0x%s stage %u -> %s\n", hex, static_cast<unsigned>(program.binary.stage), name.c_str());
++            } catch (const std::exception& error) {
++                std::fprintf(stderr, "[drawdump] 0x%s failed: %s\n", hex, error.what());
++            }
++        }
++    }
+     if (traceCapSync()) traceCapture("draw-capture", program.binary.codeAddress, submission.queue, memory, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
+     if (profile) {
+         ++captures;

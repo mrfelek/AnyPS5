@@ -1,0 +1,324 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+index ee03e283f..d2fc598ec 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+@@ -1,3 +1,4 @@
++#include "prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+@@ -1090,6 +1091,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+ }
+ 
+ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey) {
++    Graphics::TmpSplit::Timer split(Graphics::TmpSplit::CommitLock);
+     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+     if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
+@@ -1100,8 +1102,10 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
+             if (std::uncaught_exceptions() == 0) driver.submitDueAfterCommit(device.get());
+         }
+     } submitDue{*this, localDevice};
++    split.Next(Graphics::TmpSplit::CommitLabels);
+     recordLabelsForPacket(localDevice.get(), queue);
+     noteDrawWriters(stages, queue);
++    split.Next(Graphics::TmpSplit::CommitDrawAndSubmitDue);
+     if (recipe != nullptr) {
+         if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe) == RecipeOutcome::Recorded) return;
+         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp b/core/libs/prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp
+new file mode 100644
+index 000000000..4306f0bf1
+--- /dev/null
++++ b/core/libs/prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp
+@@ -0,0 +1,106 @@
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++
++// TEST ONLY (APS5_TMP_COMMITTER_SPLIT=1): sub-phase timers of the draw committer's per-draw work,
++// printed as one [tmp-split] line every 10 s. Not for upstream.
++namespace AgcDriver::Graphics::TmpSplit {
++
++enum Slot : std::size_t {
++    LookupKey, LookupFind, LookupRevalidate, LookupMoved, LookupAliases,
++    RecordStoreChecks, RecordBindingsSnapshots, RecordBindingsAllocate, RecordBindingsUpdate, RecordPassAccess, RecordStartPass, RecordCommands, RecordLeavePass,
++    Keep, PipelineMasked, PipelineCached, PipelineFramebuffer, PipelineDepth,
++    CommitLock, CommitLabels, CommitDrawAndSubmitDue,
++    SlotCount
++};
++
++inline constexpr std::array<const char*, SlotCount> Names{
++    "lookup.key", "lookup.find", "lookup.revalidate", "lookup.moved", "lookup.aliases",
++    "record.storeChecks", "record.bindings.snapshots", "record.bindings.allocate", "record.bindings.update", "record.passAccess", "record.startPass", "record.commands", "record.leavePass",
++    "keep", "pipeline.masked", "pipeline.cached", "pipeline.framebuffer", "pipeline.depth",
++    "commit.lock", "commit.labels", "commit.drawAndSubmitDue"};
++
++inline bool On() {
++    static const bool on = std::getenv("APS5_TMP_COMMITTER_SPLIT") != nullptr;
++    return on;
++}
++
++struct Totals {
++    std::array<std::atomic<std::uint64_t>, SlotCount> ns{};
++    std::array<std::atomic<std::uint64_t>, SlotCount> count{};
++    std::atomic<std::uint64_t> snapshots{0}, snapshotHits{0}, uploads{0}, uploadBytes{0}, freshBuffers{0}, movedWordBuffers{0}, writes{0};
++    std::atomic<std::int64_t> last{0};
++};
++
++inline Totals& Get() {
++    static Totals* totals = new Totals();
++    return *totals;
++}
++
++inline void Report() {
++    auto& totals = Get();
++    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
++    auto last = totals.last.load(std::memory_order_relaxed);
++    if (last == 0) {
++        totals.last.compare_exchange_strong(last, now);
++        return;
++    }
++    if (now - last < std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count()) return;
++    if (!totals.last.compare_exchange_strong(last, now)) return;
++    char line[2048];
++    int n = std::snprintf(line, sizeof(line), "[tmp-split] 10 s, ms (calls, us each):");
++    for (std::size_t i = 0; i < SlotCount && n > 0 && static_cast<std::size_t>(n) < sizeof(line); ++i) {
++        const auto ns = totals.ns[i].exchange(0, std::memory_order_relaxed);
++        const auto calls = totals.count[i].exchange(0, std::memory_order_relaxed);
++        if (calls == 0) continue;
++        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %.1f (%llu, %.2f)", Names[i], static_cast<double>(ns) / 1e6, static_cast<unsigned long long>(calls), static_cast<double>(ns) / 1e3 / static_cast<double>(calls));
++    }
++    if (n > 0 && static_cast<std::size_t>(n) < sizeof(line)) {
++        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; bindings: snapshots %llu (unwritten hits %llu, uploads %llu of %llu KiB, fresh buffers %llu), moved word buffers made %llu, descriptor writes %llu",
++            static_cast<unsigned long long>(totals.snapshots.exchange(0)), static_cast<unsigned long long>(totals.snapshotHits.exchange(0)), static_cast<unsigned long long>(totals.uploads.exchange(0)), static_cast<unsigned long long>(totals.uploadBytes.exchange(0) / 1024),
++            static_cast<unsigned long long>(totals.freshBuffers.exchange(0)), static_cast<unsigned long long>(totals.movedWordBuffers.exchange(0)), static_cast<unsigned long long>(totals.writes.exchange(0)));
++    }
++    std::fprintf(stderr, "%s\n", line);
++}
++
++inline void Add(Slot slot, std::uint64_t ns) {
++    auto& totals = Get();
++    totals.ns[slot].fetch_add(ns, std::memory_order_relaxed);
++    totals.count[slot].fetch_add(1, std::memory_order_relaxed);
++}
++
++inline void Count(std::atomic<std::uint64_t> Totals::*field, std::uint64_t value = 1) {
++    if (On()) (Get().*field).fetch_add(value, std::memory_order_relaxed);
++}
++
++// Times from construction (or the last Next) to the next Next or the destructor.
++class Timer {
++public:
++    explicit Timer(Slot first) : slot(first), on(On()) {
++        if (on) start = std::chrono::steady_clock::now();
++    }
++    void Next(Slot next) {
++        if (!on) return;
++        const auto now = std::chrono::steady_clock::now();
++        if (slot != SlotCount) Add(slot, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count()));
++        slot = next;
++        start = now;
++    }
++    void Stop() { Next(SlotCount); }
++    ~Timer() {
++        Stop();
++        if (on) Report();
++    }
++
++private:
++    Slot slot;
++    bool on;
++    std::chrono::steady_clock::time_point start{};
++};
++
++}
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
+index d930aab70..5f5b183f3 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
+@@ -12,6 +12,7 @@
+ #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+@@ -1663,12 +1664,18 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
+     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+     if (resolved.cacheable) {
++        TmpSplit::Timer split(TmpSplit::LookupKey);
+         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
++        split.Next(TmpSplit::LookupFind);
++        auto found = SharedResourceCache().Find(resolved.contentKey);
++        split.Next(TmpSplit::LookupRevalidate);
++        if (auto cached = std::move(found)) {
+             const bool valid = cached->Revalidate(shaders);
++            split.Next(TmpSplit::LookupMoved);
+             auto* recorder = Recorder::Active();
+             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
+             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
++            split.Next(TmpSplit::LookupAliases);
+             if (moved.has_value()) {
+                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                 resolved.resources = std::move(cached);
+@@ -2137,6 +2144,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+     // within the open batch) and the extent. The previous draw's pass is continued only when this
+     // draw neither reads its attachments (a barrier would be owed, which no pass allows) nor
+     // records anything outside a pass (an indirect draw's argument barrier and scratch copies).
++    TmpSplit::Timer split(TmpSplit::RecordStoreChecks);
+     const auto passKey = DrawRenderPassKey(context, state, record.targetViews);
+     const bool readsTarget = std::any_of(record.targets.begin(), record.targets.end(), [&](const std::shared_ptr<StorageTexture>& target) { return resources.ReadsImage(target.get()); });
+     // A queued DCC key store over memory the draw writes or reads in place (unknown for an
+@@ -2157,7 +2165,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+         recorder->FlushStores();
+         outcome.storesFlushed = true;
+     }
++    split.Stop();
+     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
++    split.Next(TmpSplit::RecordPassAccess);
+     const bool capture = CaptureInputsEnabled();
+     const bool meshIndirect = state.stages.mesh && args != nullptr;
+     const bool addressBased = resources.HoldsLease();
+@@ -2207,8 +2217,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+     }
+     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
+     const bool fenced = state.depth.has_value() || !record.proxies.empty();
++    split.Next(TmpSplit::RecordStartPass);
+     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
++    split.Next(TmpSplit::RecordCommands);
+     const bool continued = start.continued;
+     outcome.passContinued = continued;
+     outcome.passBegun = !continued;
+@@ -2321,10 +2333,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+             }
+         };
+     }
++    split.Next(TmpSplit::RecordLeavePass);
+     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
+     timer.phase(PhaseRecord);
++    split.Next(TmpSplit::Keep);
+     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
+     timer.phase(PhaseKeep);
++    split.Stop();
+     if (record.waited) {
+         // The wait the dispatch path makes for such work (source 3, "address-based"): the
+         // write-back runs before the next packet, so the CPU never reads copied results or
+@@ -2762,6 +2777,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
+     if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
+     APS5_LOG_CHARS_OUT_DEBUG("Creating Pipeline");
+     // The state is copied only when a mask must change.
++    TmpSplit::Timer pipelineSplit(TmpSplit::PipelineMasked);
+     auto& masked = prepared.masked;
+     masked = maskedState(state, inputs.fragmentOutputs);
+     if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
+@@ -2788,10 +2804,12 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
+         Require(!selectedPipeline->SplitsFaces() && !selectedPipeline->SplitsSecondChannel(), "stencil replay refuses pipeline face or channel splits");
+         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
+     }
++    pipelineSplit.Next(TmpSplit::PipelineCached);
+     auto& pipeline = prepared.pipeline;
+     pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+     // Resident targets' views are stable while their storage image lives, so the framebuffer is
+     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
++    pipelineSplit.Next(TmpSplit::PipelineFramebuffer);
+     auto& owners = prepared.owners;
+     owners.reserve(targets.size());
+     auto& framebufferOwners = prepared.framebufferOwners;
+@@ -2812,7 +2830,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
+             Require(reordered.back().method == step.method, "a reordered attachment's surface disagrees with the planned way of putting its samples in order");
+         }
+     }
++    pipelineSplit.Next(TmpSplit::PipelineDepth);
+     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
++    pipelineSplit.Stop();
+     timer.phase(PhasePipeline);
+     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
+     return true;
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
+index 84bc84197..da6d77b0a 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
+@@ -9,6 +9,7 @@
+ #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+@@ -5608,6 +5609,7 @@ std::size_t ShaderResources::DrawUploadLimit() {
+ 
+ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly) const {
+     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
++    TmpSplit::Timer split(movedOnly ? TmpSplit::SlotCount : TmpSplit::RecordBindingsSnapshots);
+     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* readsSlot = nullptr;
+     auto& reads = ShaderRecompiler::ThreadOwned(readsSlot);
+     guestMemory.InPlaceReads(reads);
+@@ -5635,6 +5637,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+                 buffer = held->buffer;
+             } else {
+                 buffer = std::make_shared<Buffer>(context, override->size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
++                if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::movedWordBuffers);
+                 std::memcpy(buffer->Bytes().data(), override->words.data(), override->size);
+                 for (const auto& patch : dataPatches) {
+                     if (patch.allocation == index && patch.byte < override->size) buffer->Bytes()[patch.byte] = static_cast<std::byte>(patch.adjustment);
+@@ -5667,6 +5670,8 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+         }
+         VkDeviceSize offset = 0;
+         auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp, &offset);
++        if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::snapshots);
++        if (!movedOnly && buffer != nullptr) TmpSplit::Count(&TmpSplit::Totals::snapshotHits);
+         static const bool verifySnapshots = std::getenv("APS5_VERIFY_DRAW_SNAPSHOTS") != nullptr;
+         if (verifySnapshots && buffer != nullptr) {
+             static std::atomic<std::uint64_t> checked{0}, differing{0};
+@@ -5681,6 +5686,8 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+             const bool uploaded = bytes != 0 && bytes <= uploadLimit;
+             if (uploaded) {
+                 auto slice = recorder.DrawUpload(bytes);
++                if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::uploads);
++                if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::uploadBytes, bytes);
+                 std::memcpy(slice.bytes, reinterpret_cast<const void*>(begin), bytes);
+                 buffer = std::move(slice.buffer);
+                 offset = slice.offset;
+@@ -5689,6 +5696,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+                 buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation, &offset);
+                 if (buffer == nullptr) {
+                     buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
++                    if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::freshBuffers);
+                     std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
+                     recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+                 }
+@@ -5702,6 +5710,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
+     }
+     if (selected.empty()) return {};
++    if (!movedOnly) split.Next(TmpSplit::RecordBindingsAllocate);
+     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
+     std::array<bool, 2> described{};
+     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
+@@ -5731,6 +5740,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+         result->fragmentLayout = fragment.layout;
+         Require(result->fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
+     }
++    if (!movedOnly) split.Next(TmpSplit::RecordBindingsUpdate);
+     thread_local std::vector<VkDescriptorBufferInfo>* buffersSlot = nullptr;
+     auto& buffers = ShaderRecompiler::ThreadOwned(buffersSlot);
+     buffers = descriptorBuffers;
+@@ -5760,6 +5770,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+     }
+     Require(nextWrite == writes.end(), "draw snapshot writes disagree with their descriptor bindings");
+     context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
++    if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::writes, writes.size());
+     recorder.Keep(result);
+     for (const auto& snapshot : result->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+     return result;
