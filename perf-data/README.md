@@ -7,7 +7,7 @@ Everything here is a readable summary. Raw logs (often several GB per run) stay 
 
 ## How to find things
 
-- [../research/](../research/): the analysis built on these runs (start with the structural analysis), dead ends and the test patches.
+- [../research/games/](../research/games/README.md): one page per game. [../research/](../research/): the analysis built on these runs (start with the structural analysis), dead ends and the test patches.
 
 - [games/](games/): one page per game, listing every measured phase and the runs for it.
 - [runs/](runs/): one page per run or A/B, named `YYYY-MM-DD-<game>-<phase>-<what>.md`.
