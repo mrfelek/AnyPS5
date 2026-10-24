@@ -9,6 +9,7 @@ Everything here is a readable summary. Raw logs (often several GB per run) stay 
 
 - [games/](games/): one page per game, listing every measured phase and the runs for it.
 - [runs/](runs/): one page per run or A/B, named `YYYY-MM-DD-<game>-<phase>-<what>.md`.
+- [data/runs.csv](data/runs.csv): one row per run arm with the headline numbers, for spreadsheets and scripts.
 - [machines.md](machines.md): hardware, OS and driver of each machine.
 - [TEMPLATE.md](TEMPLATE.md): the layout every run page follows.
 
@@ -16,8 +17,9 @@ Everything here is a readable summary. Raw logs (often several GB per run) stay 
 
 | Game | Phases measured | Page |
 |---|---|---|
-| Diablo II: Resurrected (PPSA03912) | main menu | [diablo-ii-resurrected.md](games/diablo-ii-resurrected.md) |
-| Hot Wheels Infinite Rush (PPSA22408) | title screen, race load, race | [hot-wheels-infinite-rush.md](games/hot-wheels-infinite-rush.md) |
+| Diablo II Resurrected (PPSA03912) | main menu | [diablo-ii-resurrected.md](games/diablo-ii-resurrected.md) |
+| Ghost of Yotei (PPSA26344) | boot, loading | [ghost-of-yotei.md](games/ghost-of-yotei.md) |
+| Hot Wheels Infinite Rush (PPSA22408) | title screen, boot, race load, race | [hot-wheels-infinite-rush.md](games/hot-wheels-infinite-rush.md) |
 | Sonic Origins Plus (PPSA05325) | Sonic 2 menu page | [sonic-origins-plus.md](games/sonic-origins-plus.md) |
 
 ## How runs are measured
