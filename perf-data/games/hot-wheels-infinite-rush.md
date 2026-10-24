@@ -11,5 +11,6 @@ Upstream discussion: [D#6895](https://github.com/boykopovar/AnyPS5/discussions/6
 | Title screen | 2026-10-24 | Linux desktop | `895f47f4e` | skip flushing big buffer bindings (upper bound) | +17% presents | [run](../runs/2026-10-24-hot-wheels-title-skip-big-flush-ab.md) |
 | Title screen | 2026-10-24 | Linux desktop | `3ca5b17655` | import the read-back buffer | copy gone, wait moves, presents unchanged | [run](../runs/2026-10-24-hot-wheels-title-join-crossing-ab.md) |
 | Boot + race load | 2026-10-24 | Linux desktop | `3ca5b17655` | heap copy trace | writable atomic whole-heap binds skip the import and copy the heap | [run](../runs/2026-10-24-hot-wheels-heap-copy-trace.md) |
+| Race load | 2026-10-24 | AMD mini PC | `137a8fab89` | host heap out of import budget A/B | no effect; 25% loaded after 15 min in all arms, GPU 3% busy | [run](../runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md) |
 
 AI-assisted. Tested by me on my own machine.
