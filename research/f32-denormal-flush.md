@@ -19,11 +19,12 @@ Run the same probe as on MoltenVK: with no execution mode declared, compare the 
 | RTX 3080 Ti, Diablo II Resurrected (PPSA03912) main menu, 4K, cache off | 92 / 93 / 88 presents per 10 s, GPU ~104 ms/frame | 117 / 113, GPU ~74 ms/frame | +26%, all in the draw class (91 -> 61 ms); screenshots identical |
 | RTX A2000 laptop, Hot Wheels Infinite Rush (PPSA22408) | draw class 519-622 ms/10 s | 461-552 | draw -10-16% in every phase; presents +0-1% title, +4-11% garage (frame dominated by copies) |
 | Radeon 780M (RADV), D2R menu and Hot Wheels garage | 51.4 presents | 51.2 | probe already "hardware" on main; no change |
+| RTX 3080 Ti, Castlevania Belmont's Curse (PPSA35399) dock scene, 2026-10-25 | 36.5 GPU ms/frame (cold boot) | 33.9-34.0 warm | CPU-bound, presents 71.5 vs 73.5-74; probe switched off: 44.7 ms; no hang in 5 arms |
 | RTX 3080 Ti, Hollow Knight Silksong (PPSA12544) title | 60 FPS cap, GPU 2.4 ms | 60 FPS, GPU 3.5 ms | one pair, not yet a regression; picture identical apart from particles |
 
 Open before an upstream PR:
-- Castlevania Belmont's Curse (PPSA35399) on the laptop: one run with the fix stayed on the loading screen after New Game (plain main always reaches gameplay); not repeated yet.
-- Silksong on the fix aborted once at Start Game ("storing storage image results pending over memory outside the write watch ... is not implemented"); not checked on plain main yet.
+- Castlevania Belmont's Curse (PPSA35399): one laptop run with the fix stayed on the loading screen after New Game. Not repeated: on the desktop (2026-10-25) all five arms, three of them with the fix, passed loading.
+- Silksong's Start Game abort ("storing storage image results pending over memory outside the write watch ... is not implemented") also happens on plain main (2026-10-25), so it is a main bug, not the fix.
 - One desktop boot with the fix had a shared-memory spike (5.6 -> 24.7 GB in 20 s), not repeated in two logged boots.
 
 The earlier test switch (`APS5_TEST_F32_FLUSH_ASSUMED=1`, [patches/gpu-float-emulation-ab.diff](patches/gpu-float-emulation-ab.diff)) gave +34% but is not exact on NVIDIA because of the floor/ceil cases.

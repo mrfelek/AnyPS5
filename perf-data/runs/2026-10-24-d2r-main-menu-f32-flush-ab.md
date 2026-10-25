@@ -79,6 +79,22 @@ Build: A = upstream `6d0139cd33` + the GameUpdate "no update" fix; B = A + probe
 - Castlevania Belmont's Curse (PPSA35399), one pair, inconclusive: A reached gameplay; B stayed on the black loading screen for about 9 minutes after New Game and was stopped. The second B run was stopped before New Game. Plain-main runs on this laptop always reach gameplay, sometimes after a few minutes of loading. Not yet known whether the probe causes the hang; to be rerun.
 - No pixel diff yet (screenshots kept).
 
+## Run 5 (2026-10-25): Castlevania loading check and Silksong on plain main, Linux desktop
+
+Builds: A = upstream `6d0139cd33`; B3 = A + probe patch v2. Each runtime relinked from its own build; shader disk cache cold at the start, so b1 and a1 are first boots. Castlevania Belmont's Curse (PPSA35399): boot, New Game, skip the cinematic, then 70 s in the dock scene; medians over 10 s windows from 5 to 70 s after the skip.
+
+| Arm | Flush log line | Presents/10 s | Frame p50 ms | GPU ms/frame | Draw class ms/frame | GPU load % | VRAM MiB | CPU ms/10 s |
+|---|---|---|---|---|---|---|---|---|
+| b1 B3 (cold) | hardware (0 of 5472) | 76 | 129.6 | 42.7 | 41.7 | 35.6 | 4721 | 25970 |
+| b2 B3 | hardware (0 of 5472) | 74 | 134.4 | 33.9 | 32.4 | 36.5 | 4155 | 24863 |
+| b3 B3 | hardware (0 of 5472) | 73.5 | 136.1 | 34.0 | 32.6 | 37.1 | 4132 | 24600 |
+| a1 A (cold) | none (main never probes) | 71.5 | 139.4 | 36.5 | 34.9 | 37.5 | 4720 | 26890 |
+| B3 + `APS5_NO_HW_F32_FLUSH=1` | none (probe skipped) | 72 | 137.9 | 44.7 | 43.7 | 36.0 | 4793 | 24422 |
+
+- **No hang:** all five arms passed the loading screen and reached the same dock scene, with no terminate, Vulkan error or device loss. The single laptop hang (Run 4) did not repeat, so there is no evidence that it comes from the fix.
+- This scene is CPU-bound (GPU about 36% busy), so presents barely move. Warm B3 uses 34.0 GPU ms per frame against 36.5 for A (-7%), but A was a cold boot, so that comparison is not clean. With the probe switched off, GPU time is the highest (44.7 ms, one run), which suggests the emulated flush costs GPU time here too.
+- **Hollow Knight Silksong (PPSA12544) on plain main A:** Start Game aborts the same way as with the fix, about 97 s in, while loading the first area ("storage image ... memory no longer registered; 135 of 144 pending ranges dropped", then "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented"). **This is a bug on main, not caused by the fix.**
+
 ## Which bottleneck moved
 
 On the RTX 3080 Ti the menu was fully GPU-bound (98-99% load) with 4K draw passes dominating. Removing the emulated flush cuts draw-pass time by about a third; the GPU drops to about 90% load and CPU per frame becomes a larger share.
