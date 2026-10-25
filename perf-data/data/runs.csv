@@ -49,3 +49,11 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse,B1,53.5,186.7,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
 2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse off,A2,53.3,187.7,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
 2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse,B2,53.6,186.7,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,M1,148,,44.1,68.3,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,R1,146.5,,44.2,68.7,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,D1,144,,44.1,66.8,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,RD1,150,,44.3,70.0,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,M2,143,,47.1,73.3,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,R2,135,,48.3,71.7,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,D2,140.5,,47.4,73.3,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
+2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+reloc-v3+draw-set-reuse,RD2,144.5,,44.1,65.3,,,,,,runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md
