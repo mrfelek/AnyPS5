@@ -50,6 +50,6 @@ Candidates for our own change (not written): keep per-pass objects once per pass
 
 ## Update 2026-10-25: Radeon 780M, D2R character select
 
-Split timers on AMD: about 46 us per draw, of which descriptor set allocate 0.5 us and update 1.6 us; the draw-and-submit step takes about 48 us per commit. My descriptor set reuse prototype cut descriptor writes by about 30% but left cost per draw, presents and GPU time unchanged, so it is ruled out. The next step is to break down draw-and-submit and name the threads so committer and queue-worker time can be told apart. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md)
+Split timers on AMD: about 46 us per draw, of which descriptor set allocate 0.5 us and update 1.6 us, while buffer snapshots take 3.3 us, template hits 21 us and full builds 71 us (32k per 10 s); indirect argument reads add about 5.4 s per 10 s. My descriptor set reuse prototype cut descriptor writes by about 30% but left cost per draw, presents and GPU time unchanged, so it is ruled out. The next step is the larger pieces (snapshots, full builds, indirect reads), and naming the threads so committer and queue-worker time can be told apart. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md)
 
 AI-assisted. Tested by me on my own machine.
