@@ -5,6 +5,7 @@ Patches used for the measurements in this folder and in [perf-data](../../perf-d
 | File | Kind | What it does | Used in |
 |---|---|---|---|
 | `nvidia-f32-flush-probe-v2.patch` | fix prototype (2 commits) | Runs the f32 denormal flush probe on NVIDIA's proprietary driver and keeps the software flush on floor/ceil unless the device declares flush-to-zero | [f32 flush](../f32-denormal-flush.md) |
+| `nvidia-f32-flush-probe-v2-rebased.patch` | fix prototype (2 commits) | The same fix rebased onto upstream `49d1f9b07e`; applies cleanly, tests pass, draw time unchanged on the Diablo II Resurrected menu | [f32 flush](../f32-denormal-flush.md) |
 | `gpu-float-emulation-ab.diff` | test switches | `APS5_TEST_F32_FLUSH_ASSUMED=1` (skip the emulated flush), `APS5_TEST_NATIVE_FMINMAX=1` | [f32 flush](../f32-denormal-flush.md) |
 | `f32-probe-print-diag.diff` | logging | Prints the probe cases that differ from the emulated flush | [f32 flush](../f32-denormal-flush.md) |
 | `gpu-pass-timing-diag.diff`, `gpu-variant-names-diag.diff`, `gpu-draw-shader-dump-diag.diff` | logging | Names GPU passes by render target, prints the top-40 GPU passes, dumps fragment shaders of chosen passes | D2R main menu runs |
