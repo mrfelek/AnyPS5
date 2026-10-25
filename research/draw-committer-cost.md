@@ -48,4 +48,8 @@ No open PR does a general "cut the committer's per-draw cost" change. Relevant:
 
 Candidates for our own change (not written): keep per-pass objects once per pass instead of per draw; skip render pass key / pipeline / framebuffer work when the draw's state equals the previous draw in the same pass; patch the moving ring pointers through dynamic offsets if #9508 cannot be used. Timer patch: [patches/committer-split-timers.diff](patches/committer-split-timers.diff).
 
+## Update 2026-10-25: Radeon 780M, D2R character select
+
+Split timers on AMD: about 46 us per draw, of which descriptor set allocate 0.5 us and update 1.6 us; the draw-and-submit step takes about 48 us per commit. My descriptor set reuse prototype cut descriptor writes by about 30% but left cost per draw, presents and GPU time unchanged, so it is ruled out. The next step is to break down draw-and-submit and name the threads so committer and queue-worker time can be told apart. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md)
+
 AI-assisted. Tested by me on my own machine.

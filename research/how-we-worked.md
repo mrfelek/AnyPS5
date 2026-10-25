@@ -27,6 +27,7 @@ These are not failures: each one is measured proof that a direction is not the w
 | Moving work to the GPU path while another limit sits right behind it (D2R indirect draws, #7591; skipping the indirect read) | GPU-path draws 0 -> 3,021 per 10 s, FPS unchanged; removing the 3.6 s wait, FPS unchanged | Find the real limit first with the full metric set; on D2R it is the GPU time of 4K draw passes (float denormal fix: +26%) |
 | More draw cache hits through relocation (Sonic, Castlevania, D2R) | Hits rose to about 50% with no FPS gain (a hit still costs about 16 us); guessed pointers gave wrong draws; the relocation prototype fails the verifier | Pointer provenance from the recompiler, ring offsets as data, and a cheaper hit path |
 | The GPU path chain on Ghost of Yotei (#9508 -> #7642 -> #10193) | Slower in loading; huge vertex shaders; cache stores everything twice | Fix its cache keys and shader size first; for speed, attack the dispatch-forced drains |
+| Reusing descriptor sets between draws (D2R on the Radeon 780M, my prototype) | About 30% fewer descriptor writes, no change in cost per draw or FPS: descriptor updates are about 3% of the draw cost | Break down the draw-and-submit step, where most of the per-draw time is; name threads to split committer and queue-worker time |
 | A bigger dispatch cache (Yotei) | Per-dispatch cost went up | Stable cache keys, not more entries |
 | Turning off fragment barycentrics on RADV (Silksong seam) | Fixed the seam, broke two other games | Host interpolation first, only for shaders that can use it (#10547) |
 

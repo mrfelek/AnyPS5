@@ -6,6 +6,7 @@ Upstream discussion: [D#5146](https://github.com/boykopovar/AnyPS5/discussions/5
 
 | Phase | Date | Machine | Build | What | Headline | Page |
 |---|---|---|---|---|---|---|
+| Character select | 2026-10-25 | AMD mini PC | `e4bb5fc125` | committer split timers, descriptor set reuse A/B (local patch) | 53 presents/10 s either way; reuse cuts descriptor writes 30%, cost per draw unchanged (about 46 us) | [run](../runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md) |
 | Main menu | 2026-10-24 | Linux desktop | `a19e7f6fd`, `6d0139cd33` | f32 denormal flush A/B | 91 -> 115 presents/10 s, GPU 104 -> 74 ms/frame on RTX 3080 Ti; no change on Radeon 780M | [run](../runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) |
 | Main menu | 2026-10-24 | Linux desktop | `a19e7f6fd` | baseline, draw cache and pass traces | 88 presents/10 s, GPU-bound at 4K, draw cache 0.3% | [run](../runs/2026-10-24-d2r-main-menu-baseline.md) |
 | Main menu | 2026-10-24 | Linux desktop | `a19e7f6fd` + #7814 VideoOut | 1080p video output | no change, still renders at 4K | [run](../runs/2026-10-24-d2r-main-menu-1080p.md) |
