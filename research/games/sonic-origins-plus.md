@@ -29,4 +29,6 @@ Draw cost per packet: precheck 0.9, decode 2.1, capture 4.1, recompile 4.6, vect
 
 **Descriptor set reuse and draw cache relocation v3 (my prototypes), 25 October, M R D RD x2:** ruled out for this menu. Reuse cuts descriptor writes per draw by 41%, but per-draw cost stays at 17.8-19.8 us and presents at 135-150 per 10 s. Relocation v3 passes the verifier but fires only about 150 times per 10 s against about 600,000 stage compiles. **Instead:** cut capture and recompile on the draw worker (8.3 of 18.3 us per packet, about 600,000 stage compiles per 10 s) and the keep, revalidate and record steps of each template hit on the committer. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md)
 
+**Why cached stages are passed over (relocation v4 counters, my test build), 26 October:** about 600,000 cached stages per 10 s are passed over because a fixed word changed; only 2,400-3,500 for a moved layout and 28,000-35,000 for moved data. So relocating moved data is ruled out as the main lever on this menu. **Instead:** find which fixed words change between otherwise matching stages and pass them as data. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-26-sonic-s2-menu-draw-cache-pass-over.md)
+
 AI-assisted. Tested by me on my own machine.
