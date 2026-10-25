@@ -45,3 +45,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+#10668,on 1,141,70.9,43.6,,25.0,,,,,runs/2026-10-25-sonic-s2-menu-fill-elision-10668.md
 2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+#10668 NO_FILL_ELISION,off 2,146.5,68.4,44.2,,25.4,,,,,runs/2026-10-25-sonic-s2-menu-fill-elision-10668.md
 2026-10-25,Sonic Origins Plus,PPSA05325,Sonic 2 menu,Linux desktop,e4bb5fc125+#10668,on 2,147.5,67.8,41.2,,25.4,,,,,runs/2026-10-25-sonic-s2-menu-fill-elision-10668.md
+2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse off,A1,53.2,187.8,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse,B1,53.5,186.7,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse off,A2,53.3,187.7,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-25,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125+draw-set-reuse,B2,53.6,186.7,,,,,,,,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
