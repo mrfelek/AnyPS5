@@ -10,7 +10,7 @@ Upstream discussion: [D#5146](https://github.com/boykopovar/AnyPS5/discussions/5
 | Main menu | 2026-10-24 | Linux desktop | `a19e7f6fd` | baseline, draw cache and pass traces | 88 presents/10 s, GPU-bound at 4K, draw cache 0.3% | [run](../runs/2026-10-24-d2r-main-menu-baseline.md) |
 | Main menu | 2026-10-24 | Linux desktop | `a19e7f6fd` + #7814 VideoOut | 1080p video output | no change, still renders at 4K | [run](../runs/2026-10-24-d2r-main-menu-1080p.md) |
 | Main menu | 2026-10-24 | Linux desktop | `a19e7f6fd` | skip indirect argument reads (probe) | stall 3.6 s -> 0, FPS unchanged (GPU-bound) | [run](../runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md) |
-| Main menu | 2026-10-24 | AMD mini PC | `e4bb5fc125` | draw cache relocation correctness check (local patch) | verifier fails with relocation on, clean with it off | [run](../runs/2026-10-24-d2r-main-menu-amd-draw-cache-relocation-check.md) |
+| Main menu | 2026-10-24 | AMD mini PC | `e4bb5fc125` | draw cache relocation correctness check (local patch, v1 and v2) | verifier fails with relocation on in both versions (v2 rerun 2026-10-25), clean with it off | [run](../runs/2026-10-24-d2r-main-menu-amd-draw-cache-relocation-check.md) |
 
 Baseline on the Linux desktop (main menu, current main): about 88 presents per 10 s, GPU-bound (98% load), about 106 ms GPU per frame, draw passes at 4K dominate, draw cache 0.3% hits.
 

@@ -18,4 +18,13 @@ The relocation is not correct yet. With it on, the verifier aborts about 5 frame
 
 No speed numbers for B; the A/B on speed waits until the relocation passes this check.
 
+## Run 2 (2026-10-25): v2 of the relocation patch
+
+- **Build:** the same upstream main `e4bb5fc125` + [data-hit-relocation-v2.patch](../../research/patches/data-hit-relocation-v2.patch) (adds a page-boundary fix) + the test GameUpdate change. Same machine, same scene, relocation on, `APS5_VERIFY_DRAW_DATA_HITS=1`, audio muted.
+- **Result:** the menu appears at 42 s; about 30 s later, while the menu settles, the verifier aborts again: stage 0 of program `0x32b36d500` in a data-only hit differs from its full build (8 runs / 20 words kept, 8 / 20 fresh, same variant). The run count now matches, so it is the contents of a run that differ, not the layout.
+- **Compared with run 1:** same class of error in a different place (run 1: stage 1 of `0x32ced1f00`, 174 words, 8 runs vs 9). The page-boundary fix removed one wrong case but not all of them.
+- After the abort the process stayed alive for about a minute while its memory grew from 14.7 to 23 GiB, until it was stopped. The Hot Wheels and Silksong verify runs and the speed A/B were not run, because the plan was to stop at the first abort.
+
+**Ruled out, and the way forward:** guessing which user words are relocatable pointers is still not exact after two versions. The way forward is to know exactly which words are pointers (provenance from the recompiler), or to pass the moving ring offsets as data (dynamic offsets) instead of baking them into the shader build.
+
 AI-assisted. Tested by me on my own machine.
