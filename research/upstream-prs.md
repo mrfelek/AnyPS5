@@ -45,7 +45,7 @@ Every PR in [boykopovar/AnyPS5](https://github.com/boykopovar/AnyPS5) that I ope
 | [#8932](https://github.com/boykopovar/AnyPS5/pull/8932) (BunnyFl) | Drop pending storage-image results on unmap | Hot Wheels, Castlevania | Not needed on these games: the abort it fixes did not reproduce on current main (0 of 6, 0 of 2) |
 | [#6970](https://github.com/boykopovar/AnyPS5/pull/6970) (meh7an) | Inline binding flags | Sonic menu, Castlevania | +8% and +20% (posted) |
 | [#6539](https://github.com/boykopovar/AnyPS5/pull/6539), [#5404](https://github.com/boykopovar/AnyPS5/pull/5404), [#4943](https://github.com/boykopovar/AnyPS5/pull/4943), [#5609](https://github.com/boykopovar/AnyPS5/pull/5609) | Draw cache: forwarded user words, bypass under 5% hits, draw relocation | Castlevania, D2R | No measurable gain |
-| [#10668](https://github.com/boykopovar/AnyPS5/pull/10668) (meh7an) | Skips repeated fills | Sonic menu | GPU -3 to -4.6 ms per frame, fill class gone; presents unchanged (CPU-bound) |
+| [#10668](https://github.com/boykopovar/AnyPS5/pull/10668) (meh7an) | Skips repeated fills | Sonic menu | GPU -3 to -4.6 ms per frame, fill class gone; presents unchanged (CPU-bound); [posted on the PR](https://github.com/boykopovar/AnyPS5/pull/10668#issuecomment-6404605718) |
 
 The game pages in [games/](games/README.md) give the full context for each of these.
 
