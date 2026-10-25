@@ -25,11 +25,12 @@ Neither prototype moves the frame rate here. Descriptor set reuse cuts descripto
 
 - With reuse on, about 200,000 sets are reused and about 2.6 million buffer descriptor writes skipped per 10 s, but each set update gets slower (0.64-0.69 -> 0.80-0.88 us).
 - The committer and queue worker 0 are both saturated at about 9.6-10.2 s of CPU per 10 s in every arm; the next busiest thread uses about 0.6 s.
+- Per-draw breakdown, M1, one 10 s window: the draw worker spends 18.3 us per packet (recompile 4.4, capture 3.9, key/lookup/validate 2.6, lock wait 2.4, decode 1.9, vectors 1.2). The committer spends 18.1 us per commit; the largest parts are keep 1.96, revalidate 1.81, record commands 1.58, buffer snapshots 1.30 and pipeline lookup 1.03 us, while set allocate and update together are about 1.0 us. Almost every draw is a template hit (about 420,000 per 10 s at 17 us each). Phase totals per 10 s: record 1,982 ms, lookup 1,604 ms, keep 828 ms, vertex 815 ms.
 - Verifier run (RD + `APS5_VERIFY_DRAW_DATA_HITS=1`, full window): no abort or mismatch.
 - All 8 arms reached the Sonic 2 menu; no validation errors, terminates or device losses.
 
 ## Ruled out, and what to do instead
 
-Both prototypes are ruled out as ways to speed up this menu. Descriptor writes are not what dominates the per-draw cost, and relocation hardly applies here. **Instead:** look at the about 600,000 shader stage compiles per 10 s (about two per data-only hit) and the remaining committer phases.
+Both prototypes are ruled out as ways to speed up this menu. Descriptor writes are not what dominates the per-draw cost, and relocation hardly applies here. **Instead:** cut capture and recompile on the draw worker (8.3 of 18.3 us per packet, about 600,000 stage compiles per 10 s, roughly two per data-only hit), and on the committer the keep, revalidate and record steps of each template hit.
 
 AI-assisted. Tested by me on my own machine.
