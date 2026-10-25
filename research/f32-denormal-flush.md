@@ -27,6 +27,8 @@ Open before an upstream PR:
 - Silksong's Start Game abort ("storing storage image results pending over memory outside the write watch ... is not implemented") also happens on plain main (2026-10-25), so it is a main bug, not the fix.
 - One desktop boot with the fix had a shared-memory spike (5.6 -> 24.7 GB in 20 s), not repeated in two logged boots.
 
+- 2026-10-26: the fix rebased onto upstream `49d1f9b07e` ([patch](patches/nvidia-f32-flush-probe-v2-rebased.patch)) applies cleanly and keeps the Diablo II Resurrected menu draw class at 62 ms/frame. That main adds about 26 ms/frame of staging traffic, so presents read 86; a plain-main boot on `49d1f9b07e` is still needed to confirm the staging comes from upstream ([run 6](../perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md)).
+
 The earlier test switch (`APS5_TEST_F32_FLUSH_ASSUMED=1`, [patches/gpu-float-emulation-ab.diff](patches/gpu-float-emulation-ab.diff)) gave +34% but is not exact on NVIDIA because of the floor/ceil cases.
 
 AI-assisted. Tested by me on my own machine.

@@ -95,6 +95,16 @@ Builds: A = upstream `6d0139cd33`; B3 = A + probe patch v2. Each runtime relinke
 - This scene is CPU-bound (GPU about 36% busy), so presents barely move. Warm B3 uses 34.0 GPU ms per frame against 36.5 for A (-7%), but A was a cold boot, so that comparison is not clean. With the probe switched off, GPU time is the highest (44.7 ms, one run), which suggests the emulated flush costs GPU time here too.
 - **Hollow Knight Silksong (PPSA12544) on plain main A:** Start Game aborts the same way as with the fix, about 97 s in, while loading the first area ("storage image ... memory no longer registered; 135 of 144 pending ranges dropped", then "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented"). **This is a bug on main, not caused by the fix.**
 
+## Run 6 (2026-10-26): the fix rebased onto a newer main, Linux desktop
+
+Build B4 = upstream `49d1f9b07e` + [nvidia-f32-flush-probe-v2-rebased.patch](../../research/patches/nvidia-f32-flush-probe-v2-rebased.patch). Both commits apply cleanly with `git am`; both tests pass (`agc_float32_flush_control`, `agc_driver_f32_denormal_flush`). Diablo II Resurrected (PPSA03912) main menu, one boot, shader disk cache off, medians over +185..+355 s.
+
+- Probe line: `[float-controls] f32 denormal flush: hardware (0 of 5472 probe results differ from the emulated flush, 42 ms)`.
+- Presents 86 per 10 s (85-88), frame p50 116.7 ms, GPU 102.4 ms/frame, GPU load 93.8%, VRAM 10.6 GB, 23.9 s CPU per 10 s, no errors.
+- GPU classes per frame: draw 62.4, staging-out 14.8, staging-in 11.3, fill 4.3.
+- **The fix still works after the rebase:** the draw class is 62.4 ms/frame, the same as B3 on `6d0139cd33` (61-62 ms; plain main there about 91).
+- **New on this main:** staging-out and staging-in classes, together 26 ms/frame and about 20.9 GB each way per 10 s, that were not in any `6d0139cd33` arm. They bring the total back to about 102 ms and 86 presents. This most likely comes from an upstream change between the two mains, not from the patch, but it is not confirmed: no plain `49d1f9b07e` arm was run. **Next:** one plain-main boot on `49d1f9b07e` to confirm where the staging traffic comes from.
+
 ## Which bottleneck moved
 
 On the RTX 3080 Ti the menu was fully GPU-bound (98-99% load) with 4K draw passes dominating. Removing the emulated flush cuts draw-pass time by about a third; the GPU drops to about 90% load and CPU per frame becomes a larger share.
