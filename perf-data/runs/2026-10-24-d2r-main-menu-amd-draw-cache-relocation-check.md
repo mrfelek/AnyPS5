@@ -27,4 +27,14 @@ No speed numbers for B; the A/B on speed waits until the relocation passes this 
 
 **Ruled out, and the way forward:** guessing which user words are relocatable pointers is still not exact after two versions. The way forward is to know exactly which words are pointers (provenance from the recompiler), or to pass the moving ring offsets as data (dynamic offsets) instead of baking them into the shader build.
 
+## Run 3 (2026-10-25): v3 of the relocation patch
+
+- **Build:** upstream `e4bb5fc125` + [data-hit-relocation-v3.patch](../../research/patches/data-hit-relocation-v3.patch) (adds a run-order check) + the test GameUpdate change. Same machine, audio muted, `APS5_VERIFY_DRAW_DATA_HITS=1`, 180 s counted per game.
+- **Verifier: no failures in three games.** D2R main menu (menu at 34 s, 54 presents per 10 s, committer 45.7 us per commit), Hot Wheels Infinite Rush (PPSA22408) title (6 presents per 10 s), Hollow Knight Silksong (PPSA12544) first area (600 presents per 10 s, committer 20.9 us per commit). No terminate, validation error or device loss.
+- **Caveat, so this is not yet proof:** the verifier's own counter of checked data-only hits reads 0 in every 10 s window of every run (also in the aborted run 2). Either that counter does not count this path, or the path did not run in these scenes. Until that counter shows checked hits, a clean pass proves little.
+- **Speed counters, Hot Wheels title (relocation off vs on):** off: 296 lookups, 0 hits, committer 1,193.8 us per commit, 6 presents per 10 s; on: 635 lookups, 6 hits, committer 381.6 us per commit, 13 presents per 10 s. The on window was clearly in a different phase of the title (twice the lookups and presents), so this shows scene timing, not the effect of the relocation.
+- **D2R speed counters: invalid.** The off arm crashed about 70 s after launch, before the menu. The on arm loaded a character and then crashed when the machine's disk filled up.
+
+**Way forward:** make the verifier's data-hit counter show real checked hits (or confirm why it stays at 0) before trusting the pass, then repeat the speed A/B in a fixed scene with enough free disk.
+
 AI-assisted. Tested by me on my own machine.
