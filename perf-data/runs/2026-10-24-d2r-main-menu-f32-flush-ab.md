@@ -103,7 +103,22 @@ Build B4 = upstream `49d1f9b07e` + [nvidia-f32-flush-probe-v2-rebased.patch](../
 - Presents 86 per 10 s (85-88), frame p50 116.7 ms, GPU 102.4 ms/frame, GPU load 93.8%, VRAM 10.6 GB, 23.9 s CPU per 10 s, no errors.
 - GPU classes per frame: draw 62.4, staging-out 14.8, staging-in 11.3, fill 4.3.
 - **The fix still works after the rebase:** the draw class is 62.4 ms/frame, the same as B3 on `6d0139cd33` (61-62 ms; plain main there about 91).
-- **New on this main:** staging-out and staging-in classes, together 26 ms/frame and about 20.9 GB each way per 10 s, that were not in any `6d0139cd33` arm. They bring the total back to about 102 ms and 86 presents. This most likely comes from an upstream change between the two mains, not from the patch, but it is not confirmed: no plain `49d1f9b07e` arm was run. **Next:** one plain-main boot on `49d1f9b07e` to confirm where the staging traffic comes from.
+- **New on this main:** staging-out and staging-in classes, together 26 ms/frame and about 20.9 GB each way per 10 s, that were not in any `6d0139cd33` arm. They bring the total back to about 102 ms and 86 presents. This most likely comes from an upstream change between the two mains, not from the patch, but it was not confirmed in this run. Run 7 confirms it.
+
+## Run 7 (2026-10-26): plain main vs the fix on `49d1f9b07e`, Linux desktop
+
+A4 = plain upstream `49d1f9b07e`; B4 = A4 + [the rebased fix](../../research/patches/nvidia-f32-flush-probe-v2-rebased.patch). Order A4 B4 A4 B4. Diablo II Resurrected (PPSA03912) main menu, shader disk cache off, medians over +185..+355 s. No errors, no pipeline creates in the window.
+
+| Arm | Flush log line | Presents/10 s | Frame p50 ms | GPU ms/frame | Top GPU classes ms/frame | GPU load % | VRAM MiB | CPU ms/10 s | Staging in / back per 10 s |
+|---|---|---|---|---|---|---|---|---|---|
+| a1 A4 | none | 77 | 131.3 | 125.1 | draw 90.0, staging-out 13.7, staging-in 10.1, fill 3.4 | 98.2 | 10607 | 16536 | 18.5 / 18.4 GB (692 regions) |
+| b1 B4 | hardware (0 of 5472, 53 ms) | 89 | 113.0 | 99.5 | draw 61.6, staging-out 13.8, staging-in 10.7, fill 4.2 | 93.2 | 10479 | 19946 | 21.6 / 21.6 GB (793 regions) |
+| a2 A4 | none | 73 | 138.2 | 131.1 | draw 92.5, staging-out 14.4, staging-in 10.8, fill 4.0 | 99.3 | 10552 | 14784 | 17.5 / 17.5 GB (654 regions) |
+| b2 B4 | hardware (0 of 5472, 45 ms) | 86 | 116.1 | 101.8 | draw 61.7, staging-out 14.5, staging-in 11.4, fill 4.4 | 94.3 | 10700 | 20396 | 21.2 / 21.2 GB (766 regions) |
+
+- **The fix still pays on current main:** GPU 125-131 -> 100-102 ms per frame (-21%), presents 73-77 -> 86-89 (+16%). The draw class falls from about 91 to about 62 ms per frame, the same saving as on `6d0139cd33`.
+- **The staging traffic comes from upstream, not from the fix:** both arms show it, about 25 ms per frame together. Nearly all staged regions come from reused address-based builds (16,481 of 16,516 in B4), and each region is about 27 MiB, against about 1.2 MiB on `6d0139cd33` (about 819 regions and 1.0 GB per 10 s there).
+- **Suspect, not confirmed:** upstream commit `a293f7901b` "perf(agc): stage written-only swept elements on discrete GPUs", which falls between the two mains and stages written-only elements into a device-local shadow of up to 256 MiB. A plain-main boot with `APS5_NO_WRITTEN_SHADOW=1` is queued to check it; the first attempt was stopped by the memory cap after a boot-time shared-memory spike (5.7 -> 21.6 GB within 20 s), the same spike seen once before with the fix, so it also happens on plain main (2 of about 13 boots of this menu).
 
 ## Which bottleneck moved
 
