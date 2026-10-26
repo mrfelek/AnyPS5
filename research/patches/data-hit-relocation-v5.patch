@@ -1,0 +1,598 @@
+From cd6842d0c97c8f0a9c8d774601f45bf4692ce9b0 Mon Sep 17 00:00:00 2001
+From: mrfelek <17274927+mrfelek@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 17:37:51 +0000
+Subject: [PATCH] perf(agc): reuse data-only hit stages whose buffer bases
+ moved
+
+A data-only hit compiled a stage again whenever a used user word
+differed, even when the word is only a buffer base and the data behind
+the new base equals the cached runs. Such stages now reuse the cached
+variant with its runs shifted, validated by content, and forwarded
+words patched. Stages whose vertex fetch decode reads guest memory
+become relocatable when every read names its user word.
+
+APS5_NO_DATA_HIT_RELOCATION and APS5_NO_VERTEX_FETCH_RELOCATION turn
+the two parts off. The draw-cache trace counts relocated stages.
+
+AI-assisted. Tested by me on my own machine.
+---
+ core/libs/prx/libSceAgcDriver/CMakeLists.txt  |  4 +-
+ .../include/Driver/Dispatch/DispatchCache.hpp |  2 +
+ .../include/Driver/Draw/DrawCache.hpp         |  3 +-
+ .../Execution/include/Driver/Driver.hpp       |  4 +
+ .../Execution/src/Driver/Draw/Draw.cpp        | 17 +++-
+ .../src/Driver/Draw/DrawCacheStatistics.cpp   |  4 +-
+ .../Execution/src/Driver/Draw/DrawCapture.cpp | 14 ++-
+ .../Execution/src/Driver/Draw/DrawLookup.cpp  | 48 ++++++++-
+ .../src/Driver/Draw/DrawRelocate.cpp          | 97 ++++++++++++++-----
+ .../Graphics/include/ShaderInputState.hpp     |  1 +
+ .../Graphics/src/ShaderInputState.cpp         |  7 +-
+ .../tests/execution/DrawCacheRelocation.cpp   | 23 +++++
+ .../tests/execution/DrawDataHitUserWords.cpp  | 43 ++++++++
+ docs/dev/ENVIRONMENT.md                       |  2 +
+ 14 files changed, 227 insertions(+), 42 deletions(-)
+
+diff --git a/core/libs/prx/libSceAgcDriver/CMakeLists.txt b/core/libs/prx/libSceAgcDriver/CMakeLists.txt
+index f86e56dca..8dd0ec23b 100644
+--- a/core/libs/prx/libSceAgcDriver/CMakeLists.txt
++++ b/core/libs/prx/libSceAgcDriver/CMakeLists.txt
+@@ -2979,8 +2979,10 @@ if(BUILD_TESTING)
+     set_tests_properties(agc_driver_draw_data_hit_user_words_verify PROPERTIES ENVIRONMENT "APS5_VERIFY_DRAW_DATA_HITS=1" SKIP_RETURN_CODE 77)
+     add_test(NAME agc_driver_draw_data_hit_user_words_refresh COMMAND agc_driver_draw_data_hit_user_words_tests)
+     set_tests_properties(agc_driver_draw_data_hit_user_words_refresh PROPERTIES ENVIRONMENT "APS5_DRAW_PIPELINE=1" SKIP_RETURN_CODE 77)
++    add_test(NAME agc_driver_draw_data_hit_user_words_no_relocation COMMAND agc_driver_draw_data_hit_user_words_tests)
++    set_tests_properties(agc_driver_draw_data_hit_user_words_no_relocation PROPERTIES ENVIRONMENT "APS5_NO_DATA_HIT_RELOCATION=1" SKIP_RETURN_CODE 77)
+     if(WIN32)
+-        set_tests_properties(agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_data_hit_user_words_verify agc_driver_draw_data_hit_user_words_refresh PROPERTIES ENVIRONMENT_MODIFICATION
++        set_tests_properties(agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_data_hit_user_words_verify agc_driver_draw_data_hit_user_words_refresh agc_driver_draw_data_hit_user_words_no_relocation PROPERTIES ENVIRONMENT_MODIFICATION
+             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+     endif()
+ 
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp
+index 5f3df6c53..af35f9177 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp
+@@ -44,6 +44,8 @@ struct DispatchVariant {
+     std::uint32_t pushOffset = 0;
+     std::vector<std::int8_t> runBases;
+     std::uint64_t relocatableWords = 0;
++    std::uint64_t baseWords = 0;
++    std::uint64_t valueWords = 0;
+     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
+     std::uint64_t userDataMask = ~std::uint64_t{0};
+     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp
+index d3f3da21f..040b1828f 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp
+@@ -101,7 +101,8 @@ struct DrawEntryCounters {
+     std::uint64_t absentNewRegisters = 0, absentUserWords = 0, absentEvicted = 0, absentNeverInserted = 0, evictions = 0;
+     std::array<std::uint64_t, 6> registerKeyMissChanges{};
+     std::uint64_t differingSameRuns = 0, differingWords = 0, differingRunsChanged = 0;
+-    std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
++    std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesRelocated = 0, dataStagesCompiled = 0, dataVerified = 0;
++    std::uint64_t dataFixedWords = 0, dataFixedValues = 0, dataFixedForwarded = 0, dataFixedBases = 0, dataLayoutRefused = 0, dataMovedDiffering = 0;
+     std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
+     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
+ };
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp
+index 01d318202..af43964e8 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp
+@@ -95,6 +95,8 @@ public:
+     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
+     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
+     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied = {});
++    static std::shared_ptr<DispatchVariant> relocatedVariant(const DispatchVariant& variant, std::span<const std::pair<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>> moves);
++    static bool relocatedLayoutKept(const DispatchVariant& kept, const DispatchVariant& moved);
+     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix = {});
+     DrawEntryCounters DrawCacheCounters();
+     EntryCounters DispatchCacheCounters();
+@@ -181,6 +183,8 @@ private:
+     void traceDrawKeyLookup(const std::array<std::uint64_t, 5>& components, bool cacheMiss);
+     static std::uint64_t drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry);
+     static bool drawRelocationEnabled();
++    static bool vertexFetchRelocation();
++    static bool dataHitRelocation();
+     static std::uint64_t relocatedContentKey(const RelocatableUserWord& word, std::uint32_t value, bool& readable);
+     static void applyShaderDataPatches(DispatchVariant& variant);
+     void learnPendingRelocation();
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+index 47cac201b..4f4c7669c 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+@@ -673,7 +673,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+     auto& dataCandidates = tail.dataCandidates;
+     auto& reused = tail.reused;
+     auto& stageData = tail.stageData;
+-    std::uint64_t dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
++    std::uint64_t dataStagesReused = 0, dataStagesRelocated = 0, dataStagesCompiled = 0, dataVerified = 0;
+     auto& drawHit = tail.drawHit;
+     auto& verifyHit = tail.verifyHit;
+     const bool stageEntries = tail.stageEntries;
+@@ -738,8 +738,13 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+         const char* what = runs != kept.runs ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
+         ++dataVerified;
+         if (what == nullptr) return;
+-        char message[320];
+-        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey));
++        std::size_t run = 0;
++        while (run < runs.size() && run < kept.runs.size() && runs[run] == kept.runs[run]) ++run;
++        const auto keptRun = run < kept.runs.size() ? kept.runs[run] : std::pair<std::uint64_t, std::uint64_t>{};
++        const auto freshRun = run < runs.size() ? runs[run] : std::pair<std::uint64_t, std::uint64_t>{};
++        const int base = run < kept.runBases.size() ? kept.runBases[run] : -1;
++        char message[480];
++        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; first differing run %zu: kept 0x%llx-0x%llx from user word %d, fresh 0x%llx-0x%llx; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), run, static_cast<unsigned long long>(keptRun.first), static_cast<unsigned long long>(keptRun.second), base, static_cast<unsigned long long>(freshRun.first), static_cast<unsigned long long>(freshRun.second), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey));
+         throw std::runtime_error(message);
+     };
+     const auto verifyStageData = [&](std::size_t i) {
+@@ -794,7 +799,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+                 if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
+                 if (stageData[i].compiled != nullptr && verifyDrawDataHits()) verifyStageData(i);
+             }
+-            if (dataEntry != nullptr && reused[i]) ++dataStagesReused;
++            if (dataEntry != nullptr && reused[i]) {
++                ++dataStagesReused;
++                if (std::find(dataEntry->stages[i].begin(), dataEntry->stages[i].end(), matched[i]) == dataEntry->stages[i].end()) ++dataStagesRelocated;
++            }
+             else if (dataEntry != nullptr) ++dataStagesCompiled;
+         }
+         const auto& result = *programResults[i];
+@@ -817,6 +825,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+     if (dataEntry != nullptr) {
+         std::lock_guard cacheLock(drawCacheMutex);
+         drawEntryCounters.dataStagesReused += dataStagesReused;
++        drawEntryCounters.dataStagesRelocated += dataStagesRelocated;
+         drawEntryCounters.dataStagesCompiled += dataStagesCompiled;
+         drawEntryCounters.dataVerified += dataVerified;
+     }
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCacheStatistics.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
+index b1f3dc2a0..02d6e54f4 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
+@@ -28,10 +28,10 @@ void Driver::reportDrawCache(DrawEntryCounters& counters, bool profile) {
+     const auto miss = [&](DrawMiss reason) { return count(counters.misses[static_cast<std::size_t>(reason)]); };
+     std::string text;
+     if (traceDrawCache()) {
+-        char line[1536];
++        char line[2048];
+         std::uint64_t misses = 0;
+         for (const auto value : counters.misses) misses += value;
+-        std::snprintf(line, sizeof(line), "[draw-cache] 10 s: %llu lookups, %llu hits (%.1f%%), %llu stage misses, %llu without an entry, %llu data-only hits (stages: %llu reused, %llu compiled; %llu verified); no entry: new registers %llu, user words/pointers only %llu, evicted %llu, seen but never inserted %llu; stage misses: front differing %llu, fragment differing %llu, other differing %llu, layout %llu, gate %llu, stage count %llu; differing captures: same runs %llu (%.1f words changed each), other runs %llu; %zu entries, %llu evicted\n", count(counters.lookups), count(counters.hits), counters.lookups != 0 ? 100.0 * static_cast<double>(counters.hits) / static_cast<double>(counters.lookups) : 0.0, count(misses), count(counters.absent), count(counters.dataHits), count(counters.dataStagesReused), count(counters.dataStagesCompiled), count(counters.dataVerified), count(counters.absentNewRegisters), count(counters.absentUserWords), count(counters.absentEvicted), count(counters.absentNeverInserted), miss(DrawMiss::FrontDiffering), miss(DrawMiss::FragmentDiffering), miss(DrawMiss::OtherDiffering), miss(DrawMiss::Layout), miss(DrawMiss::Gate), miss(DrawMiss::Stages), count(counters.differingSameRuns), counters.differingSameRuns != 0 ? static_cast<double>(counters.differingWords) / static_cast<double>(counters.differingSameRuns) : 0.0, count(counters.differingRunsChanged), drawCache.size(), count(counters.evictions));
++        std::snprintf(line, sizeof(line), "[draw-cache] 10 s: %llu lookups, %llu hits (%.1f%%), %llu stage misses, %llu without an entry, %llu data-only hits (stages: %llu reused, %llu of them relocated, %llu compiled; %llu verified; cached stages passed over: %llu for a changed fixed word (%llu read as values, %llu of them forwarded; %llu bases of stages that cannot relocate), %llu for a moved layout, %llu for moved data that differs); no entry: new registers %llu, user words/pointers only %llu, evicted %llu, seen but never inserted %llu; stage misses: front differing %llu, fragment differing %llu, other differing %llu, layout %llu, gate %llu, stage count %llu; differing captures: same runs %llu (%.1f words changed each), other runs %llu; %zu entries, %llu evicted\n", count(counters.lookups), count(counters.hits), counters.lookups != 0 ? 100.0 * static_cast<double>(counters.hits) / static_cast<double>(counters.lookups) : 0.0, count(misses), count(counters.absent), count(counters.dataHits), count(counters.dataStagesReused), count(counters.dataStagesRelocated), count(counters.dataStagesCompiled), count(counters.dataVerified), count(counters.dataFixedWords), count(counters.dataFixedValues), count(counters.dataFixedForwarded), count(counters.dataFixedBases), count(counters.dataLayoutRefused), count(counters.dataMovedDiffering), count(counters.absentNewRegisters), count(counters.absentUserWords), count(counters.absentEvicted), count(counters.absentNeverInserted), miss(DrawMiss::FrontDiffering), miss(DrawMiss::FragmentDiffering), miss(DrawMiss::OtherDiffering), miss(DrawMiss::Layout), miss(DrawMiss::Gate), miss(DrawMiss::Stages), count(counters.differingSameRuns), counters.differingSameRuns != 0 ? static_cast<double>(counters.differingWords) / static_cast<double>(counters.differingSameRuns) : 0.0, count(counters.differingRunsChanged), drawCache.size(), count(counters.evictions));
+         text += line;
+         std::snprintf(line, sizeof(line), "[draw-cache] register-key miss component changes (10 s): stable registers %llu, user data %llu, auxiliary registers %llu, device %llu, first shader set %llu, unchanged components %llu\n", count(counters.registerKeyMissChanges[0]), count(counters.registerKeyMissChanges[1]), count(counters.registerKeyMissChanges[2]), count(counters.registerKeyMissChanges[3]), count(counters.registerKeyMissChanges[4]), count(counters.registerKeyMissChanges[5]));
+         text += line;
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
+index 288ca494b..2e2f5f8f5 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
+@@ -180,7 +180,19 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
+             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
+             for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
+             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
+-            tagVariantRuns(*variant, regions, stageCapture.userDataUse, decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0), programs[i].hiddenUserWords, stageCapture.supplied);
++            bool eligible = decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0);
++            const auto* use = &stageCapture.userDataUse;
++            ShaderRecompiler::SrtUserDataUse widened;
++            if (!eligible && vertexFetchRelocation() && !decodeReads[i].empty() && std::all_of(decodeReads[i].begin(), decodeReads[i].end(), [](const Graphics::DecodeRead& read) { return read.origin >= 0 && read.origin < 64; })) {
++                widened = stageCapture.userDataUse;
++                for (const auto& read : decodeReads[i]) {
++                    widened.asBase |= std::uint64_t{1} << read.origin;
++                    for (std::uint32_t at = 0; at < read.size; at += sizeof(std::uint32_t)) widened.reads.emplace_back(read.address + at, read.origin);
++                }
++                use = &widened;
++                eligible = true;
++            }
++            tagVariantRuns(*variant, regions, *use, eligible, programs[i].hiddenUserWords, stageCapture.supplied);
+             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
+             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {
+                 const auto& variants = entry->stages[i];
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawLookup.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawLookup.cpp
+index ec65e9734..7d0606519 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawLookup.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawLookup.cpp
+@@ -2,7 +2,9 @@
+ #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+ #include <algorithm>
++#include <atomic>
+ #include <bit>
++#include <cstdio>
+ 
+ namespace AgcDriver::DriverDetail {
+ 
+@@ -223,7 +225,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
+                 counters.validateUs += phaseMs[DrawRowKeyLookupValidate] * 1000;
+             }
+         } else if (dataEntry != nullptr && graphics.stages.path == Graphics::ShaderPath::Vertex && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
+-            std::uint64_t imagesFlushed = 0, runsSynced = 0;
++            std::uint64_t imagesFlushed = 0, runsSynced = 0, fixedWords = 0, fixedValues = 0, fixedForwarded = 0, fixedBases = 0, layoutRefused = 0, movedDiffering = 0;
+             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
+             std::optional<SampledReadScope> sampling;
+             for (std::size_t i = 0; i < programs.size(); ++i) {
+@@ -231,20 +233,56 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
+                 const auto& now = programs[i].userData;
+                 const auto& was = dataEntry->decode->programs[i].userData;
+                 auto& candidates = dataCandidates[i];
+-                for (const auto& variant : dataEntry->stages[i]) {
++                for (const auto& kept : dataEntry->stages[i]) {
+                     bool usedEqual = true;
++                    std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>> moves;
+                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
+-                        if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;
++                        if (now[w] == was[w] || (w < 64u && ((kept->userDataMask >> w) & 1u) == 0)) continue;
++                        const bool movable = dataHitRelocation() && w < 64u && ((kept->relocatableWords >> w) & 1u) != 0 && now[w] != 0 && was[w] != 0 && ((now[w] ^ was[w]) & 3u) == 0;
++                        if (movable) {
++                            moves.push_back({static_cast<std::uint32_t>(w), {was[w], now[w]}});
++                            continue;
++                        }
++                        usedEqual = false;
++                        ++fixedWords;
++                        const bool value = w < 64u && ((kept->valueWords >> w) & 1u) != 0;
++                        const bool base = w < 64u && ((kept->baseWords >> w) & 1u) != 0;
++                        const auto& forwarded = kept->compiled->shaderDataUserWords;
++                        const bool forwards = std::find(forwarded.begin(), forwarded.end(), static_cast<std::uint32_t>(w)) != forwarded.end();
++                        if (value) ++fixedValues;
++                        if (value && forwards) ++fixedForwarded;
++                        if (base && !value) ++fixedBases;
++                        static std::atomic<std::uint32_t> samples{0};
++                        if (traceDrawCache() && samples.fetch_add(1, std::memory_order_relaxed) < 32) std::fprintf(stderr, "[draw-cache] data-only hit passed over stage %zu (program 0x%llx): user word %zu 0x%x -> 0x%x, read as %s%s%s, forwarded %s, relocatable words 0x%llx\n", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), w, was[w], now[w], value ? "value" : "", value && base ? " and " : "", base ? "base" : value ? "" : "neither", forwards ? "yes" : "no", static_cast<unsigned long long>(kept->relocatableWords));
+                     }
+                     if (!usedEqual) continue;
+-                    if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
++                    if ((i == 0 && kept->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == kept->pushOffset; })) continue;
++                    const auto variant = moves.empty() ? kept : relocatedVariant(*kept, moves);
++                    if (!moves.empty() && !relocatedLayoutKept(*kept, *variant)) {
++                        ++layoutRefused;
++                        continue;
++                    }
+                     std::vector<ShaderRecompiler::MemoryRegion> regions;
+                     appendEntryRegions(*variant, regions);
+                     auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
+                     if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
+-                    if (result == EntryOutcome::Equal) candidates.emplace_back(variant, std::move(regions));
++                    if (result != EntryOutcome::Equal) {
++                        if (!moves.empty()) ++movedDiffering;
++                        continue;
++                    }
++                    if (!moves.empty()) applyShaderDataPatches(*variant);
++                    candidates.emplace_back(variant, std::move(regions));
+                 }
+             }
++            if (fixedWords != 0 || layoutRefused != 0 || movedDiffering != 0) {
++                std::lock_guard cacheLock(drawCacheMutex);
++                drawEntryCounters.dataFixedWords += fixedWords;
++                drawEntryCounters.dataFixedValues += fixedValues;
++                drawEntryCounters.dataFixedForwarded += fixedForwarded;
++                drawEntryCounters.dataFixedBases += fixedBases;
++                drawEntryCounters.dataLayoutRefused += layoutRefused;
++                drawEntryCounters.dataMovedDiffering += movedDiffering;
++            }
+         }
+         phaseTiming.Phase(DrawRowKeyLookupValidate);
+     }
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRelocate.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRelocate.cpp
+index c03e05bae..0628d6ac5 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRelocate.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRelocate.cpp
+@@ -6,6 +6,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <bit>
++#include <compare>
+ #include <cstdlib>
+ #include <cstring>
+ #include <limits>
+@@ -21,6 +22,8 @@ std::uint64_t AlignedWord(std::uint32_t word) {
+     return word & ~std::uint32_t {3};
+ }
+ 
++constexpr std::uint64_t CapturePageBytes = 4096;
++
+ }
+ 
+ bool Driver::drawRelocationEnabled() {
+@@ -28,6 +31,70 @@ bool Driver::drawRelocationEnabled() {
+     return enabled;
+ }
+ 
++bool Driver::vertexFetchRelocation() {
++    static const bool enabled = std::getenv("APS5_NO_VERTEX_FETCH_RELOCATION") == nullptr;
++    return enabled;
++}
++
++bool Driver::dataHitRelocation() {
++    static const bool enabled = drawRelocationEnabled() && std::getenv("APS5_NO_DATA_HIT_RELOCATION") == nullptr;
++    return enabled;
++}
++
++std::shared_ptr<DispatchVariant> Driver::relocatedVariant(const DispatchVariant& variant, std::span<const std::pair<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>> moves) {
++    auto copy = std::make_shared<DispatchVariant>();
++    copy->runs = variant.runs;
++    copy->runBases = variant.runBases;
++    copy->relocatableWords = variant.relocatableWords;
++    copy->baseWords = variant.baseWords;
++    copy->valueWords = variant.valueWords;
++    copy->words = variant.words;
++    copy->forgetSerial = variant.forgetSerial;
++    copy->compiled = variant.compiled;
++    copy->meshIndexDescriptor = variant.meshIndexDescriptor;
++    copy->shader = variant.shader;
++    copy->dataPositions = variant.dataPositions;
++    copy->dataSlots = variant.dataSlots;
++    copy->flatBinding = variant.flatBinding;
++    copy->pushOffset = variant.pushOffset;
++    copy->userDataMask = variant.userDataMask;
++    copy->vertexInfo = variant.vertexInfo;
++    for (const auto& [index, values] : moves) {
++        const auto& [from, to] = values;
++        const auto delta = AlignedWord(to) - AlignedWord(from);
++        for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {
++            if (copy->runBases[run] != static_cast<std::int8_t>(index)) continue;
++            copy->runs[run].first += delta;
++            copy->runs[run].second += delta;
++        }
++        const auto& forwarded = variant.compiled->shaderDataUserWords;
++        for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
++            if (forwarded[slot] == index) copy->shaderDataPatches.emplace_back(slot, to);
++        }
++    }
++    return copy;
++}
++
++bool Driver::relocatedLayoutKept(const DispatchVariant& kept, const DispatchVariant& moved) {
++    const auto page = [](std::uint64_t address) { return address / CapturePageBytes; };
++    const auto& runs = kept.runs;
++    for (std::size_t run = 0; run < runs.size() && run < kept.runBases.size() && run < moved.runs.size(); ++run) {
++        if (moved.runs[run] == runs[run]) continue;
++        const auto& [begin, end] = moved.runs[run];
++        if (end > begin && page(begin) != page(end - 1)) return false;
++        const auto base = kept.runBases[run];
++        const bool splitAfter = run + 1 < runs.size() && runs[run].second % CapturePageBytes == 0 && runs[run + 1].first == runs[run].second && run + 1 < kept.runBases.size() && kept.runBases[run + 1] == base;
++        const bool splitBefore = run > 0 && runs[run].first % CapturePageBytes == 0 && runs[run - 1].second == runs[run].first && kept.runBases[run - 1] == base;
++        if (splitAfter || splitBefore) return false;
++    }
++    for (std::size_t run = 1; run < runs.size() && run < moved.runs.size(); ++run) {
++        const auto before = runs[run - 1].first <=> runs[run].first;
++        const auto after = moved.runs[run - 1].first <=> moved.runs[run].first;
++        if (before != after) return false;
++    }
++    return true;
++}
++
+ std::uint64_t Driver::relocatedContentKey(const RelocatableUserWord& word, std::uint32_t value, bool& readable) {
+     std::uint64_t hash = 0x9e3779b97f4a7c15ull;
+     const auto mix = [&](std::uint64_t mixed) {
+@@ -84,6 +151,8 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
+         return (relocatable >> found->second & 1u) != 0 ? static_cast<std::int8_t>(found->second) : std::int8_t {-1};
+     };
+     variant.relocatableWords = relocatable;
++    variant.baseWords = use.asBase;
++    variant.valueWords = use.asValue;
+     for (std::size_t index = 0; index < regions.size(); ++index) {
+         const auto& region = regions[index];
+         const auto count = region.bytes.size() / sizeof(std::uint32_t);
+@@ -220,33 +289,11 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
+                 ++counters.refused;
+                 continue;
+             }
+-            auto copy = std::make_shared<DispatchVariant>();
+-            copy->runs = variant->runs;
+-            copy->runBases = variant->runBases;
+-            copy->relocatableWords = variant->relocatableWords;
+-            copy->words = variant->words;
+-            copy->forgetSerial = variant->forgetSerial;
+-            copy->compiled = variant->compiled;
+-            copy->meshIndexDescriptor = variant->meshIndexDescriptor;
+-            copy->shader = variant->shader;
+-            copy->dataPositions = variant->dataPositions;
+-            copy->dataSlots = variant->dataSlots;
+-            copy->flatBinding = variant->flatBinding;
+-            copy->pushOffset = variant->pushOffset;
+-            copy->vertexInfo = variant->vertexInfo;
++            std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>> stageMoves;
+             for (const auto& move : moves) {
+-                if (move.program != i) continue;
+-                const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
+-                for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {
+-                    if (copy->runBases[run] != static_cast<std::int8_t>(move.index)) continue;
+-                    copy->runs[run].first += delta;
+-                    copy->runs[run].second += delta;
+-                }
+-                const auto& forwarded = variant->compiled->shaderDataUserWords;
+-                for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
+-                    if (forwarded[slot] == move.index) copy->shaderDataPatches.emplace_back(slot, move.to);
+-                }
++                if (move.program == i) stageMoves.push_back({move.index, {move.from, move.to}});
+             }
++            auto copy = relocatedVariant(*variant, stageMoves);
+             relocated->stages[i].push_back(std::move(copy));
+         }
+     }
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp b/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp
+index d555d389a..62e0f36e5 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp
+@@ -20,6 +20,7 @@ struct DecodeRead {
+     std::uint64_t address;
+     std::array<std::byte, 16> data{};
+     std::uint32_t size = 0;
++    std::int32_t origin = -1;
+     std::span<const std::byte> Bytes() const { return {data.data(), size}; }
+ };
+ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<DecodeRead>* reads = nullptr, bool staticAbi = false, std::uint32_t hiddenUserWords = 0);
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderInputState.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderInputState.cpp
+index 30ea58080..d023be316 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderInputState.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderInputState.cpp
+@@ -237,10 +237,11 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
+     info.fetchEmbedded = true;
+     info.fetchAttribReg = static_cast<std::uint32_t>(vertexAttribReg);
+     info.fetchBufferReg = static_cast<std::uint32_t>(vertexBufferReg);
+-    const auto record = [&](std::uint64_t address, std::span<const std::byte> bytes) {
++    const auto record = [&](std::uint64_t address, std::span<const std::byte> bytes, std::uint32_t origin) {
+         if (reads == nullptr) return;
+         auto& read = reads->emplace_back();
+         read.address = address;
++        read.origin = static_cast<std::int32_t>(origin);
+         std::copy(bytes.begin(), bytes.end(), read.data.begin());
+         read.size = static_cast<std::uint32_t>(bytes.size());
+     };
+@@ -300,7 +301,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
+         std::array<std::byte, 4> attribWordBytes{};
+         const auto attribWordAddress = attribTableAddr + static_cast<std::uint64_t>(semantic.semantic) * 4u;
+         std::memcpy(attribWordBytes.data(), &attribWords[i], 4);
+-        record(attribWordAddress, attribWordBytes);
++        record(attribWordAddress, attribWordBytes, attribWord);
+         const std::uint32_t attribWord = attribWords[i];
+         const auto index = attribWord & 0x1fu;
+         const auto format = (attribWord >> 5u) & 0x1ffu;
+@@ -310,7 +311,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
+         std::array<std::byte, 16> sharpBytes{};
+         const auto sharpAddress = bufferTableAddr + static_cast<std::uint64_t>(index) * 16u;
+         std::memcpy(sharpBytes.data(), sharpWords[i].data(), 16);
+-        record(sharpAddress, sharpBytes);
++        record(sharpAddress, sharpBytes, bufferWord);
+         std::array<std::uint32_t, 4> sharp{};
+         std::memcpy(sharp.data(), sharpBytes.data(), 16);
+         if (info.resourcesNum >= ShaderRecompiler::ShaderVertexStageInfo::MaxResources) throw std::runtime_error("AGC graphics: vertex resource count exceeds the supported domain");
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/DrawCacheRelocation.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/DrawCacheRelocation.cpp
+index 45f1e6035..a5f6f16d3 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/DrawCacheRelocation.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/DrawCacheRelocation.cpp
+@@ -219,6 +219,28 @@ void SplitRunsNameTheirSharedWords() {
+     Require(shared.region < variant.runs.size() && variant.runs[shared.region].first == tableAddress && first == shared.first, "the shared words of a variant whose runs were split for relocation name run " + std::to_string(shared.region) + " of " + std::to_string(variant.runs.size()) + ", not the table's run " + std::to_string(variant.runs.size() - 1u));
+ }
+ 
++void RelocationKeepsTheCapturedLayout() {
++    using AgcDriver::DriverDetail::Driver;
++    AgcDriver::DriverDetail::DispatchVariant variant;
++    variant.runs = {{0x10100u, 0x10104u}, {0x10200u, 0x10210u}};
++    variant.runBases = {0, 1};
++    variant.words.assign(5, 0u);
++    variant.relocatableWords = 0x3u;
++    variant.compiled = std::make_shared<ShaderRecompiler::RecompileResult>();
++    const auto moved = [&](std::uint32_t index, std::uint32_t from, std::uint32_t to) {
++        const std::array<std::pair<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>, 1> moves{{{index, {from, to}}}};
++        return Driver::relocatedVariant(variant, moves);
++    };
++    const auto near = moved(0, 0x10100u, 0x10140u);
++    Require(near->runs.front() == std::make_pair(std::uint64_t {0x10140u}, std::uint64_t {0x10144u}) && Driver::relocatedLayoutKept(variant, *near), "a base moved within its page and before the other table's run was refused");
++    const auto past = moved(0, 0x10100u, 0x10300u);
++    Require(!Driver::relocatedLayoutKept(variant, *past), "a base moved past the other table's run was kept, so its runs no longer sort like a fresh capture's");
++    const auto onto = moved(0, 0x10100u, 0x10200u);
++    Require(!Driver::relocatedLayoutKept(variant, *onto), "a base moved onto the other table's start was kept, so its runs no longer sort like a fresh capture's");
++    const auto across = moved(1, 0x10200u, 0x10ff8u);
++    Require(!Driver::relocatedLayoutKept(variant, *across), "a run moved across a 4 KiB page was kept, though a fresh capture splits it there");
++}
++
+ void UnrelocatedAliasesStayOut(bool libraries) {
+     Registered(SecondVertexHeader, SecondVertexCode.data(), sizeof(SecondVertexCode), 2);
+     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+@@ -296,6 +318,7 @@ int main(int argc, char** argv) {
+         const bool evicted = argc == 2 && std::string(argv[1]) == "--evicted";
+         const bool kept = argc == 2 && std::string(argv[1]) == "--kept";
+         if (!evicted && !kept) SplitRunsNameTheirSharedWords();
++        if (!evicted && !kept) RelocationKeepsTheCapturedLayout();
+         bool libraries = false;
+         {
+             const auto device = OpenVulkanTestDevice();
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/DrawDataHitUserWords.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/DrawDataHitUserWords.cpp
+index ed4b5280c..fe60f4809 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/DrawDataHitUserWords.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/DrawDataHitUserWords.cpp
+@@ -29,6 +29,8 @@ using AgcDriver::Graphics::Require;
+ 
+ alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
+ alignas(256) constexpr std::array<std::uint32_t, 11> PixelCode{0xf4080100u, 0xfa000000u, 0xbf8cc07fu, 0xe0300000u, 0x80010000u, 0xbf8c3f70u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u};
++alignas(256) constexpr std::array<std::uint32_t, 11> MovedTablePixelCode = PixelCode;
++alignas(256) constexpr std::array<std::uint32_t, 11> PageCrossPixelCode = PixelCode;
+ alignas(256) constexpr std::array<std::uint32_t, 16> TriangleVertexCode{
+     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
+     0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
+@@ -49,6 +51,8 @@ alignas(8) Header VertexHeader{};
+ alignas(8) Header PixelHeader{};
+ alignas(8) Header ArithmeticPixelHeader{};
+ alignas(8) Header DirectBufferPixelHeader{};
++alignas(8) Header MovedTablePixelHeader{};
++alignas(8) Header PageCrossPixelHeader{};
+ 
+ void Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
+     header.shader.file_header = 0x34333231u;
+@@ -258,6 +262,43 @@ void DirectBufferBaseMovesWithItsPayload() {
+     Require(after.dataStagesCompiled - before.dataStagesCompiled >= 1, "a draw whose descriptor base moved reused the pixel stage built for the old base: the rebuild this test documents is gone, flip it to a reuse check (" + Counts(after) + ", before: " + Counts(before) + ")");
+ }
+ 
++void MovedTableOverTheSameDescriptorKeepsTheStage(bool verify, bool acrossPages) {
++    auto& header = acrossPages ? PageCrossPixelHeader : MovedTablePixelHeader;
++    const auto& code = acrossPages ? PageCrossPixelCode : MovedTablePixelCode;
++    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
++    Registered(header, code.data(), sizeof(code), 1);
++    auto* ring = GuestBlock();
++    auto* data = ring + 8192;
++    data[0] = std::bit_cast<std::uint32_t>(0.25f);
++    const auto describe = [&](std::uint32_t* slot) {
++        const auto address = reinterpret_cast<std::uintptr_t>(data);
++        slot[0] = static_cast<std::uint32_t>(address);
++        slot[1] = static_cast<std::uint32_t>(address >> 32u) & 0xffffu;
++        slot[2] = 16;
++        slot[3] = 0x4bfacu;
++        return slot;
++    };
++    const auto table = [&](std::size_t index) { return describe(acrossPages && index != 0 ? ring + 1024 * (index + 1) - 2 : ring + 1024 + index * 64); };
++    const auto draw = [&](const std::uint32_t* slot, bool setup) {
++        auto commands = setup ? Setup(false, code.data()) : std::vector<std::uint32_t>{};
++        PixelUserData(commands, slot, 0x11);
++        Append(commands, 0x2d, {3, 2});
++        return Submit(std::move(commands));
++    };
++    draw(table(0), true);
++    const auto inserted = draw(table(0), false);
++    Require(inserted.inserts != 0, "the repeated register key was not admitted: " + Counts(inserted));
++    const bool relocation = !acrossPages && std::getenv("APS5_NO_DRAW_RELOCATION") == nullptr && std::getenv("APS5_NO_DATA_HIT_RELOCATION") == nullptr;
++    const std::string moved = acrossPages ? "a draw whose descriptor table moved across a page boundary" : "a draw whose descriptor table moved with the same contents";
++    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
++    const auto after = draw(table(1), false);
++    const auto counts = " (" + Counts(after) + ", " + std::to_string(after.dataStagesRelocated - before.dataStagesRelocated) + " relocated; before: " + Counts(before) + ")";
++    Require(after.dataHits == before.dataHits + 1, moved + " was not a data-only hit" + counts);
++    if (verify) Require(after.dataVerified - before.dataVerified == (acrossPages ? 1u : 2u), "verify mode: the stages of " + moved + " were not built and compared as expected" + counts);
++    else if (relocation) Require(after.dataStagesCompiled == before.dataStagesCompiled && after.dataStagesRelocated - before.dataStagesRelocated == 1, moved + " compiled its pixel stage again instead of relocating it" + counts);
++    else Require(after.dataStagesCompiled - before.dataStagesCompiled == 1 && after.dataStagesRelocated == before.dataStagesRelocated, moved + " reused its pixel stage without relocation" + counts);
++}
++
+ }
+ 
+ int main() {
+@@ -273,6 +314,8 @@ int main() {
+         UnreadUserWordsKeepTheStage(verify);
+         ReadUserWordsChangeTheOutput();
+         DirectBufferBaseMovesWithItsPayload();
++        MovedTableOverTheSameDescriptorKeepsTheStage(verify, false);
++        MovedTableOverTheSameDescriptorKeepsTheStage(verify, true);
+         AgcDriverShutdown_nid_postfix();
+         std::cout << "Data-only hits " << (verify ? "verified" : "reused") << " the stages whose read user words did not change\n";
+         return 0;
+diff --git a/docs/dev/ENVIRONMENT.md b/docs/dev/ENVIRONMENT.md
+index 93ed16065..95f41c287 100644
+--- a/docs/dev/ENVIRONMENT.md
++++ b/docs/dev/ENVIRONMENT.md
+@@ -215,6 +215,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_NO_COPY_KNOWN_VALUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | disables serving a copy's destination from source values the driver already knows |
+ | `APS5_NO_CPU_COPY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | disables the CPU copy path of the copy HLE |
+ | `APS5_NO_DATA_HITS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/DispatchCache.cpp` |  | disables dispatch-cache hits that differ only in ShaderData or FlattenedSrt words |
++| `APS5_NO_DATA_HIT_RELOCATION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRelocate.cpp` |  | disables reusing a cached stage on a draw data hit whose used user words differ only in buffer bases, after checking the moved data; the stage is compiled again instead |
+ | `APS5_NO_DCC_PRESYNC` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | leaves the DCC key ranges out of the surfaces a build pre-syncs, so only the surface itself waits for its producer |
+ | `APS5_NO_DCC_WORD_SCAN` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/DccMetadata.cpp` |  | restores the byte-by-byte DCC key scan instead of the word-at-a-time compare |
+ | `APS5_NO_DEFERRED_EVICTION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | destroys displaced resource-cache entries under the mutex instead of deferring them to the open batch |
+@@ -334,6 +335,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_NO_UNREGISTERED_DROP` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | stores a storage image's pending results even when its memory is no longer registered, instead of dropping them |
+ | `APS5_NO_VALIDATE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | validates every draw instead of serving the validation memo |
+ | `APS5_NO_VALIDATE_SKIP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | syncs every pending write instead of skipping validation on written-element evidence |
++| `APS5_NO_VERTEX_FETCH_RELOCATION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRelocate.cpp` |  | keeps stages whose vertex fetch decode reads guest memory out of draw relocation |
+ | `APS5_NO_VOUCHED_VALIDATION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/VariantValidation.cpp` |  | validates a cached draw or dispatch through its per-run checks instead of its table block's vouch |
+ | `APS5_NO_WAIT_OVERLAP_SUBMIT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | disables the unlocked wait that submits recorded work while overlapping writes are open |
+ | `APS5_NO_WORDWISE_CAPTURE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/ShaderMemory.cpp` |  | fetches every captured page whole instead of reading pending pages word by word |
+-- 
+2.43.0
+
