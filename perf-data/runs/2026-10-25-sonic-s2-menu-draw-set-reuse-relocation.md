@@ -29,6 +29,13 @@ Neither prototype moves the frame rate here. Descriptor set reuse cuts descripto
 - Verifier run (RD + `APS5_VERIFY_DRAW_DATA_HITS=1`, full window): no abort or mismatch.
 - All 8 arms reached the Sonic 2 menu; no validation errors, terminates or device losses.
 
+## Draw replay R1, verify arm (2026-10-26)
+
+A third prototype on the same scene: draw replay R1 ([draw-replay-r1.diff](../../research/patches/draw-replay-r1.diff), on `e4bb5fc125` + [data-hit-relocation-v5.patch](../../research/patches/data-hit-relocation-v5.patch), test only). On a draw cache hit it replays the recorded draw instead of recording it again. One arm with `APS5_DRAW_REPLAY=1 APS5_VERIFY_DRAW_REPLAY=1 APS5_VERIFY_DRAW_DATA_HITS=1` and the trace on, full 242 s, Sonic 2 menu reached.
+
+- Verifier, last 10 s window, verbatim: `; replay: hits 15909 (with moved buffers 15021), verified 15909: key differs 0, template differs 0, pipeline differs 0, push constants differ 0`. No `[tmp-replay] verify:` mismatch lines, no errors.
+- Only about 16,000 draws per 10 s are replayed, because only about 4% of draws reach a draw cache hit here (the user words change, see the [fixed-word run](2026-10-26-sonic-s2-menu-draw-cache-fixed-words.md)). So the A/B speed arms were dropped; R1 is replaced by R2. Replay is correct on what it covers; its speed only matters once more draws hit the cache.
+
 ## Ruled out, and what to do instead
 
 Both prototypes are ruled out as ways to speed up this menu. Descriptor writes are not what dominates the per-draw cost, and relocation hardly applies here. **Instead:** cut capture and recompile on the draw worker (8.3 of 18.3 us per packet, about 600,000 stage compiles per 10 s, roughly two per data-only hit), and on the committer the keep, revalidate and record steps of each template hit.
