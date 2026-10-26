@@ -32,7 +32,7 @@ All runs for this game: [game page](https://github.com/mrfelek/AnyPS5/blob/main/
 | [#8139](https://github.com/boykopovar/AnyPS5/pull/8139) (sparse page permissions, merged) | Tracks permissions per page in sparse ranges. | Heap copies remain (460 vs 447 before). Shadow-publish time halved, hook waits doubled. |
 | [#10655](https://github.com/boykopovar/AnyPS5/pull/10655) (import page hashing off the draw thread) | Moves import page hashing off the draw thread. | Linux race load: no clear difference (A 571/541 s, B 511/541 s, inside noise). The PR targets Windows, so a Windows run is the real test. |
 | [#7844](https://github.com/boykopovar/AnyPS5/pull/7844) (host heap import budget) | Caps how much host memory the import may reserve. | Radeon 780M: no effect; race load stuck at 25% after 15 min in both arms (the cap never applies with a 5658 MiB host heap). |
-| Float denormal flush probe (my fix, not upstream yet) | Only emulates float denormal handling where the GPU differs. | Windows RTX A2000: draw GPU time -10-16% in every phase, presents +0-1% on the title and +4-11% in the garage, because copies dominate. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 4) |
+| Float denormal flush probe (my fix, [#11297](https://github.com/boykopovar/AnyPS5/pull/11297), open) | Only emulates float denormal handling where the GPU differs. | Windows RTX A2000: draw GPU time -10-16% in every phase, presents +0-1% on the title and +4-11% in the garage, because copies dominate. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 4) |
 
 ## Ruled out, and what to do instead
 
@@ -42,6 +42,8 @@ Test switches that prove which way is not the way. Each says which direction to 
 - **Importing the crossing buffer instead of copying it:** the import works (0 CPU copies), but presents do not change; the next reader blocks on the same GPU writer. **Instead:** removing waits one at a time only moves them. The GPU result has to stay on the GPU and be read there, instead of going through guest memory ([structural analysis](https://github.com/mrfelek/AnyPS5/blob/main/research/structural-analysis.md), problem 1). [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-hot-wheels-title-join-crossing-ab.md)
 
 ## Black scenery (investigation paused)
+
+Also posted upstream: [comment on D#6895](https://github.com/boykopovar/AnyPS5/discussions/6895#discussioncomment-19185945).
 
 Same on Radeon 780M (RADV), RTX 3080 Ti (Linux) and NVIDIA on Windows.
 - The scenery comes from indirect draws whose arguments the game builds on the GPU after a culling pass. All those arguments come out 0, so the G-buffer stays empty.

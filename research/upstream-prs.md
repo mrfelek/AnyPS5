@@ -6,6 +6,7 @@ Every PR in [boykopovar/AnyPS5](https://github.com/boykopovar/AnyPS5) that I ope
 
 | PR | What it does | Game behind it | Numbers | State |
 |---|---|---|---|---|
+| [#11297](https://github.com/boykopovar/AnyPS5/pull/11297) | Runs the f32 denormal flush probe on NVIDIA's driver and keeps the software flush only where the GPU differs (floor/ceil stay emulated) | Diablo II Resurrected (PPSA03912) main menu GPU-bound on NVIDIA | RTX 3080 Ti: 91 -> 115 presents per 10 s (+26%); on main `49d1f9b07e` 73-77 -> 86-89 (+16%), GPU -21%; no change on Radeon 780M ([run](../perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md)) | Open |
 | [#10614](https://github.com/boykopovar/AnyPS5/pull/10614) | GameUpdate answers "no update" instead of throwing | Hot Wheels Infinite Rush (PPSA22408) died on the logo screen at about 3.7 min | Gets the game past its update check | Approved, waits merge |
 | [#10547](https://github.com/boykopovar/AnyPS5/pull/10547) | Prefers host interpolation on RADV; native barycentrics only where host interpolation cannot be used | Hollow Knight Silksong (PPSA12544) diagonal seam on AMD | Seam gone on Radeon 780M; D2R and Hot Wheels still run; GPU tests pass | Approved, waits merge |
 | [#10228](https://github.com/boykopovar/AnyPS5/pull/10228) | Plans an image table for a texture read at a first-lane offset | Ghost of Yotei (PPSA26344) shaders stopping with "GetImageResource ... not a valid runtime value" | Fixes 2 of the 3 failing shaders by offline replay | Waits re-review |
