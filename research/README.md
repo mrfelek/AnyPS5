@@ -42,7 +42,7 @@ From the PRs and discussions read for these notes (authors and reviewers; not co
 
 ## My upstream PRs from this work
 
-- #7618: stage written-only swept buffer elements (Diablo II Resurrected (PPSA03912) in-game: 55-57 -> 77-85 presents per 10 s, +150-200 MiB memory).
+- #7618: stage written-only swept buffer elements (Diablo II Resurrected (PPSA03912) in-game: 55-57 -> 77-85 presents per 10 s, +150-200 MiB memory). Merged 25 October; the staging cost it may add on the main menu is being checked.
 - #9957: buffer presence checked at run time.
 - #10228: image table for a T# read at a first-lane offset (Ghost of Yotei shaders, see [image-descriptors-7459.md](image-descriptors-7459.md)).
 - #10547: host interpolation first on RADV (Hollow Knight Silksong (PPSA12544) diagonal seam on AMD).
