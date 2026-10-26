@@ -10,7 +10,7 @@ Every PR in [boykopovar/AnyPS5](https://github.com/boykopovar/AnyPS5) that I ope
 | [#10547](https://github.com/boykopovar/AnyPS5/pull/10547) | Prefers host interpolation on RADV; native barycentrics only where host interpolation cannot be used | Hollow Knight Silksong (PPSA12544) diagonal seam on AMD | Seam gone on Radeon 780M; D2R and Hot Wheels still run; GPU tests pass | Approved, waits merge |
 | [#10228](https://github.com/boykopovar/AnyPS5/pull/10228) | Plans an image table for a texture read at a first-lane offset | Ghost of Yotei (PPSA26344) shaders stopping with "GetImageResource ... not a valid runtime value" | Fixes 2 of the 3 failing shaders by offline replay | Waits re-review |
 | [#9957](https://github.com/boykopovar/AnyPS5/pull/9957) | Reads a buffer's presence at run time instead of baking it into the shader | Ghost of Yotei giant compute shaders compiled twice | Warm run: giant compiles 21.8 s in 15 min vs 1,221 s | Waits on reviewers (approved earlier, rebased since) |
-| [#7618](https://github.com/boykopovar/AnyPS5/pull/7618) | Stages only the written elements of buffers a dispatch writes (discrete GPUs, records wider than one store) | Diablo II Resurrected (PPSA03912) gameplay | 55-57 -> 77-85 presents per 10 s for +150-200 MiB VRAM | Waits re-review |
+| [#7618](https://github.com/boykopovar/AnyPS5/pull/7618) | Stages only the written elements of buffers a dispatch writes (discrete GPUs, records wider than one store) | Diablo II Resurrected (PPSA03912) gameplay | 55-57 -> 77-85 presents per 10 s for +150-200 MiB VRAM. Since merging, the menu shows about 25 ms/frame of staging on plain main; being checked ([run 7](../perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md)) | Merged 2026-10-25 |
 | [#8135](https://github.com/boykopovar/AnyPS5/pull/8135) | Testing guide: memory budgets and sleeping displays | all | docs | Merged |
 | [#7591](https://github.com/boykopovar/AnyPS5/pull/7591) | Folds draw offsets the shader reloads after the fetch add, so those indirect draws move to the GPU path | Diablo II Resurrected | GPU indirect draws 0 -> about 3,021 per 10 s; FPS unchanged | Merged |
 | [#7428](https://github.com/boykopovar/AnyPS5/pull/7428) | Ngs2 sampler and mixer setup clear the voice callback | Metal Gear Solid: Peace Walker | correctness | Merged |
@@ -23,7 +23,7 @@ Every PR in [boykopovar/AnyPS5](https://github.com/boykopovar/AnyPS5) that I ope
 
 | PR | What it does | State |
 |---|---|---|
-| [#9251](https://github.com/boykopovar/AnyPS5/pull/9251) (SandstromPL) | Decodes MIMG gather opcodes 0xc8 and 0xd8 (my two commits) | Open |
+| [#9251](https://github.com/boykopovar/AnyPS5/pull/9251) (SandstromPL) | Decodes MIMG gather opcodes 0xc8 and 0xd8 (my two commits) | Merged |
 | [#9183](https://github.com/boykopovar/AnyPS5/pull/9183) (fma-rc) | 3D image gather at level zero; replaces my branch `fix/volume-gather-lz` | Open |
 | [#5413](https://github.com/boykopovar/AnyPS5/pull/5413), [#5414](https://github.com/boykopovar/AnyPS5/pull/5414), [#5422](https://github.com/boykopovar/AnyPS5/pull/5422), [#5427](https://github.com/boykopovar/AnyPS5/pull/5427), [#5439](https://github.com/boykopovar/AnyPS5/pull/5439) (mariusyo07) | Five missing system exports for Peace Walker (Json string, Ult mutex/pool destroy, NetCtl V6 callbacks, mspace aligned alloc, AudioOut2 disable chat) | Merged |
 | [#1186](https://github.com/boykopovar/AnyPS5/pull/1186) (Michon) | Depth-slice sampling; kept my refusal tests | Merged |

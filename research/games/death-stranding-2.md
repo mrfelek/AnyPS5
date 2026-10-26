@@ -10,7 +10,7 @@ The last blocker I saw is the fragment/colour output: the game runs but shows no
 
 | Change | What it does |
 |---|---|
-| [#9251](https://github.com/boykopovar/AnyPS5/pull/9251) (SandstromPL, carries my commits) | Decodes the MIMG gather opcodes 0xc8 and 0xd8. Labelled "unblocks title". |
+| [#9251](https://github.com/boykopovar/AnyPS5/pull/9251) (SandstromPL, carries my commits) | Decodes the MIMG gather opcodes 0xc8 and 0xd8. Labelled "unblocks title". Merged. |
 | [#9183](https://github.com/boykopovar/AnyPS5/pull/9183) (fma-rc) | 3D image gather; replaces my earlier branch `fix/volume-gather-lz`. |
 
 Note for anyone testing: the game's `localcacheps5` folder can be a symlink into the dump. Check symlinks before copying or moving files, or you can move `fullgame.prx` out of the dump.
