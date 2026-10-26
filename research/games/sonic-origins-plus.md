@@ -31,4 +31,6 @@ Draw cost per packet: precheck 0.9, decode 2.1, capture 4.1, recompile 4.6, vect
 
 **Why cached stages are passed over (relocation v4 counters, my test build), 26 October:** about 600,000 cached stages per 10 s are passed over because a fixed word changed; only 2,400-3,500 for a moved layout and 28,000-35,000 for moved data. So relocating moved data is ruled out as the main lever on this menu. **Instead:** find which fixed words change between otherwise matching stages and pass them as data. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-26-sonic-s2-menu-draw-cache-pass-over.md)
 
+**Which fixed words (relocation v5 counters), 26 October:** every one is a user word the shader reads as a value, mostly user word 12, changing in whole ring-block steps (for example 0x4c00040 -> 0x5600040 -> 0x4d00040), so they look like ring-buffer offsets. **Instead:** pass those words to the shader as data rather than baking them into the stage. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-26-sonic-s2-menu-draw-cache-fixed-words.md)
+
 AI-assisted. Tested by me on my own machine.

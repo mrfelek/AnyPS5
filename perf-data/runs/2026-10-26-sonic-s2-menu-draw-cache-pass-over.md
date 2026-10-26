@@ -20,7 +20,7 @@ Almost every cached stage that is not reused is passed over because **a fixed wo
 
 Medians over the same span: 151.5 presents per 10 s, frame p50 66.1 ms, GPU 44.3 ms per frame (draw 23.1, copy 4.6, storage upload 4.1, fill 2.9).
 
-**Way to go:** the fixed-word check decides reuse on this scene, not moved data. Next, find which fixed words change between otherwise matching stages, and whether those words can be passed as data instead of being baked into the stage. Relocating moved data further is ruled out as the main lever here.
+**Way to go:** the fixed-word check decides reuse on this scene, not moved data. Next, find which fixed words change between otherwise matching stages, and whether those words can be passed as data instead of being baked into the stage. Relocating moved data further is ruled out as the main lever here. Follow-up: [which fixed words](2026-10-26-sonic-s2-menu-draw-cache-fixed-words.md) (ring offsets in user word 12, read as values).
 
 ## The three draw cache lines, verbatim
 
