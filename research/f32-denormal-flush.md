@@ -1,6 +1,6 @@
 # f32 denormal flush on NVIDIA
 
-Runs: [f32 flush probe A/B](../perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Linux desktop RTX 3080 Ti, AMD mini PC Radeon 780M, Windows laptop RTX A2000). Patch: [patches/nvidia-f32-flush-probe-v2.patch](patches/nvidia-f32-flush-probe-v2.patch).
+Runs: [f32 flush probe A/B](../perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Linux desktop RTX 3080 Ti, AMD mini PC Radeon 780M, Windows laptop RTX A2000). Patch: [patches/nvidia-f32-flush-probe-v2.patch](patches/nvidia-f32-flush-probe-v2.patch). Upstream PR: [#11297](https://github.com/boykopovar/AnyPS5/pull/11297).
 
 ## Problem
 

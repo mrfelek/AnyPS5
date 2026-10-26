@@ -17,6 +17,6 @@ Everything I tested on this game, in one place. Upstream discussion: [D#726](htt
 
 ## Other tests
 
-- **Float denormal flush probe** (my fix, not upstream yet), title screen on RTX 3080 Ti, one pair: both at the 60 FPS cap, GPU 2.4 vs 3.5 ms per frame (one pair only, not yet a regression), picture identical apart from moving particles. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md)
+- **Float denormal flush probe** (my fix, [#11297](https://github.com/boykopovar/AnyPS5/pull/11297), open), title screen on RTX 3080 Ti, one pair: both at the 60 FPS cap, GPU 2.4 vs 3.5 ms per frame (one pair only, not yet a regression), picture identical apart from moving particles. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md)
 
 AI-assisted. Tested by me on my own machine.
