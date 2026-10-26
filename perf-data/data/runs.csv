@@ -65,3 +65,4 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07e+f32-probe-v2-rebased,b2 B4,86,116.1,101.8,94.3,20.4,,,,10.7,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
 2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07e NO_WRITTEN_SHADOW,A4 shadow off,93,108.3,102.6,98.3,19.0,,,,10.3,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
 2026-10-26,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v5,relocation on,145,69.0,44.0,,,,,,,runs/2026-10-26-sonic-s2-menu-draw-cache-fixed-words.md
+2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07e+f32-probe-v2-rebased NO_WRITTEN_SHADOW,B4 shadow off,110,91.4,77.3,92.2,21.8,,,,10.5,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md

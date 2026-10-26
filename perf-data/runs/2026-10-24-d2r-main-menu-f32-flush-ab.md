@@ -121,6 +121,16 @@ A4 = plain upstream `49d1f9b07e`; B4 = A4 + [the rebased fix](../../research/pat
 - **Likely cause (clean A/B pending):** upstream commit `a293f7901b` "perf(agc): stage written-only swept elements on discrete GPUs", my own merged PR [#7618](https://github.com/boykopovar/AnyPS5/pull/7618), which stages written-only elements into a device-local shadow of up to 256 MiB. `APS5_NO_WRITTEN_SHADOW=1` is older than that PR and turns off every written shadow, so this is an upper bound, not an isolated test. Plain `49d1f9b07e` with it (one boot, same setup and window): staging 36 KiB in and back per 10 s instead of 17.5-18.5 GB, no staging classes, presents 93, frame p50 108.3 ms, GPU 102.6 ms per frame (draw 90.9, fill 3.4, storage upload 2.9), GPU load 98.3%, VRAM 10.3 GB, 19.0 s CPU per 10 s, no errors. That matches the old `6d0139cd33` plain main (about 103 ms, 92-93 presents).
 - **Verdict so far:** switching all written shadows off saves about 25 GPU ms per frame on the RTX 3080 Ti (73-77 presents with it, 93 without), while in gameplay it gave 55-57 -> 77-85 presents. Together with the matching `6d0139cd33` numbers this makes that PR the likely cause, but it is not isolated yet. **Next:** a clean A/B of main against main with `a293f7901b` reverted. If it confirms, the way to go is to keep the shadow for the gameplay case but stop it from staging whole 27 MiB regions every frame on the menu. The fix with the shadow off (expected about 74 ms per frame) has not been run.
 - A first shadow-off boot was stopped by the memory cap after a boot-time shared-memory spike (5.7 -> 21.6 GB within 20 s); the same spike was seen once before with the fix, so it also happens on plain main (2 of about 13 boots of this menu).
+- **Fix with all written shadows off** (B4 + `APS5_NO_WRITTEN_SHADOW=1`, one boot, no spike, no errors): presents 110 per 10 s (107-112), frame p50 91.4 ms, GPU 77.3 ms per frame (draw 62.9, fill 4.4, storage upload 3.8, no staging classes), GPU load 92.2%, VRAM 10.5 GB, 21.8 s CPU per 10 s, 42 KiB staged in and back per 10 s.
+
+Summary on `49d1f9b07e`, Diablo II Resurrected main menu (GPU ms per frame, presents per 10 s):
+
+| Build | Written shadows on | Written shadows off (`APS5_NO_WRITTEN_SHADOW=1`) |
+|---|---|---|
+| Plain main | 125-131 ms, 73-77 | 102.6 ms, 93 |
+| Main + float fix | 100-102 ms, 86-89 | 77.3 ms, 110 |
+
+The two effects add up: the float fix saves about 27 ms of draw time and switching the shadows off about 25 ms of staging, together +43% presents over plain main. The switch turns off every written shadow; a revert of `a293f7901b` alone is booked to isolate that PR.
 
 ## Which bottleneck moved
 
