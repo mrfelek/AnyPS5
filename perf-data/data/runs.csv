@@ -94,3 +94,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,town,AMD mini PC,cc672fdfc6 revert a293f7901b,b1 B,57,175.8,143.1,,,,,,1.9,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,AMD mini PC,cc672fdfc6,a2 A,58,173.2,143.0,,,,,,1.9,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,AMD mini PC,cc672fdfc6 revert a293f7901b,b2 B,57,175.8,142.9,,,,,,1.8,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6,a1 A (title?),1.9,,,,,,,,3.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6 revert a293f7901b,b1 B,3.9,,,,,,,,3.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6,a2 A,2.7,,,,,,,,3.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6 revert a293f7901b,b2 B,2.6,,,,,,,,3.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
