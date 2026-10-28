@@ -22,7 +22,7 @@ Question: the [fixed-word run](2026-10-26-sonic-s2-menu-draw-cache-fixed-words.m
 
 Top GPU classes in every arm: draw about 23 ms, copy about 4.8, storage upload 4.1-5.1, fill about 3.
 
-**Ruled out:** patching forwarded values alone. **Instead:** patch the base of the buffer descriptor that holds the forwarded word (v7, next run).
+**Ruled out:** patching forwarded values alone. **Instead:** patch the base of the buffer descriptor that holds the forwarded word ([v7 run](2026-10-28-sonic-s2-menu-draw-cache-buffer-base-patch.md): its first verifier run finds a binding mismatch, so it needs a fix first).
 
 ## The draw cache lines, two per arm, verbatim
 m1:
