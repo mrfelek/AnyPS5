@@ -110,7 +110,33 @@ B3 (routes on)
 879x [draw] indirect 0x... args 0x... stride 16 count 1 locs base=0x...(s20) inst=0x...(s21) idx=none analyzer v=-1 i=-1 shared=0/0 conflict=0/0 indx=0 -> cpu (patched SGPR not folded)
 ```
 
-**Not ready as is:** a fix that speeds up NVIDIA by 6-16% and slows the 780M by about 60% cannot go upstream in this form. **Next:** a like-for-like pair with the menu-and-town script on the 780M (where A does show the 5.2 s argument stall), and find what makes the route-path draw so expensive on RADV.
+**Not ready as is:** a fix that speeds up NVIDIA by 6-16% and slows the 780M by about 60% cannot go upstream in this form. **Next:** a like-for-like pair with the menu-and-town script on the 780M (where A does show the 5.2 s argument stall), and find what makes the route-path draw so expensive on RADV. Update: that pair is [below](#amd-like-for-like-menu--town-pair-a2-against-b3); the -60% does not reproduce in it, but the menu committer time doubles and presents do not rise.
+
+## AMD like-for-like menu + town pair (A2 against B3)
+
+- **Same build and arm switch** as above, menu-and-town script (one run measures the menu, then loads into town and measures again), shader disk cache off, pipeline journal threads 0, draw and GPU profiling and the indirect trace on, audio muted. The first B3 was stopped by the memory guard at boot (the known boot-time memory spike, also on plain main); it was run once more and that run is clean. No validation errors, device loss or terminate. RSS max 8.7-9.6 GiB in both.
+
+**Result: in a like-for-like run, routes on removes the menu's argument stall (about 5.2 s per 10 s -> 0), but committer time in the menu more than doubles (44 -> 101 us per commit) and presents do not rise: menu 57 -> 56, town 59 -> 55.** The earlier 50 -> 19 drop (A1/B1: menu-only script, shader disk cache on, a button press every 2 s) does not reproduce here, so it depends on that setup. On the 780M neither arm is a clear win.
+
+| median per 10 s | A2 menu | B3 menu | A2 town | B3 town |
+|---|---|---|---|---|
+| presents | 57 | 56 (55-57) | 59 | 55 |
+| frame p50 ms | 176.6 | 178.8 | 170.8 | 181.7 |
+| GPU busy per present ms | 172.6 | 177.2 | 143.8 | 147.3 |
+| GPU time ms (timed ranges) | 520 | 551 | 1303 | 1240 |
+| argument reads ms | 5207-5259 | 0.0 | 0.0-0.1 | 0.0-0.1 |
+| committer us per commit | 44.4 | 101.3 | 45.2 | 49.4 |
+| recorded draw avg us | 41 | 52 | 33 | 33 |
+| template hits / builds | 44162 / 34200 | 43423 / 33536 | 120554 / 31117 | 112288 / 28983 |
+| resource cache draw misses | 32832 | 32192 | 29717 | 27687 |
+| route lines | 0 | 668 (55.7) | 0 | 819 (54.6) |
+| GPU-path ("in-place") indirect draws | 0 | 668 | 46587 (3106) | 44226 (2948) |
+| CPU-path ("patched SGPR not folded") lines | 0 | 668 | 879 (58.6) | 819 |
+| top two threads % | 45 + 42 | 58 + 48 | 82 + 77 | 85 + 73 |
+
+- No driver thread shows up under its own name. B3's distinct trace lines: menu 668x the stride-16 (s20)/(s21) draw with both a CPU line and a GPU line, as in B1; town 27,027x stride 20 (s28)/(s29) and 16,380x (s24)/(s25) on the GPU path (these take it with routes off too), plus 819x the stride-16 draw with both lines.
+
+**Reading:** on the 780M the stall is gone but the time moves into the committer, so the fix is still not ready for RADV. **Next:** find why the route-path draw costs about 57 us more per commit in the committer on RADV.
 
 ## Indirect draw trace lines, verbatim
 
