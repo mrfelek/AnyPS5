@@ -21,6 +21,7 @@ Started straight into the crash-site hub with `-lvl hub_crashsite` and `APS5_HOS
 |---|---|
 | jemalloc as the game's allocator (local) | +15% (posted earlier in this thread). |
 | MSAA changes that take Peace Walker in-game ([#7803](https://github.com/boykopovar/AnyPS5/pull/7803) + [#8871](https://github.com/boykopovar/AnyPS5/pull/8871), thuanquang, 2D MSAA texture reads) | No difference: 82-85 vs 80-85 presents per 10 s, 0 MSAA refusals in both, VRAM about 10.1 GB. This game does not use that path. |
+| [#10894](https://github.com/boykopovar/AnyPS5/pull/10894) (WallisSkill, keeps resource templates whose textures are remade every use; +16-20% on Diablo II) | Nothing to act on: with the PR off, about 170 s in hub_crashsite gives 6,574 draw and 1,260 dispatch refusals of that kind, against 912,489 on Diablo II. Cache misses (0.7-1.8k per 10 s) come from layout changes. PR-on arm not run. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-28-astro-bot-per-use-texture-templates-10894-scan.md) |
 
 Open: what limits it to about 8 FPS. Profile logs exist for both runs but are not analysed yet.
 

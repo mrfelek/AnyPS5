@@ -114,7 +114,48 @@ Question: since staging the 202.5 MiB element pays in town but costs the menu, c
 [staging] adaptive: 0x2a86e47f0+0xca80000 GPU 95.8 ms/frame staged, 138.1 in place (12/7 frames) -> staged
 ```
 
-The likely cost (not yet tested) is the re-checking: each decision runs 6-8 frames in place again, about 40 ms extra each in town. **Next:** back off the re-check (double the interval each time the answer repeats), then rerun the same pair.
+The likely cost (not yet tested) is the re-checking: each decision runs 6-8 frames in place again, about 40 ms extra each in town. **Next:** back off the re-check (double the interval each time the answer repeats), then rerun the same pair. Update: [v2 below](#follow-up-adaptive-staging-v2-re-checks-backed-off-desktop) does that; town GPU time is back to the PR-in level, town presents still about 3% short.
+
+## Follow-up: adaptive staging v2, re-checks backed off (desktop)
+
+- **Build:** B = `cc672fdfc6` + [adaptive-staging-v2.diff](../../research/patches/adaptive-staging-v2.diff) (replaces v1: the re-check interval doubles while the answer repeats). A = plain `cc672fdfc6`. Same environment as the v1 pair (draw and GPU profiling, staging counts, indirect trace), headless, muted, shader disk cache off. One run per arm, menu and town in the same run; a second A run was added because town was within 5%. No errors.
+
+| | A1 (PR in, from the v1 pair) | A2 | v1 | v2 |
+|---|---|---|---|---|
+| Menu presents per 10 s | 93.0 | 93.5 | 112.5 | 113.0 |
+| Menu GPU ms per frame | 95.8 | 95.2 | 75.8 | 75.7 |
+| Menu staging per 10 s | 23.5 GB | - | 5.7 GB | 5.0 GB |
+| Menu staging ms per frame (in + out) | 10.3 + 12.5 | - | 2.5 + 2.1 | 1.6 + 1.6 |
+| Town presents per 10 s | 86 | 85 | 81 | 82.5 |
+| Town GPU ms per frame | 84.3 | 83.9 | 91.8 | 84.1 |
+| Town staging GB per 10 s | 21.4 | 21.1 | 19.0 | 19.4 |
+| Town staging ms per frame (in + out) | 10.1 + 12.4 | - | 10.9 + 13.8 | 9.9 + 12.1 |
+| Committer us per commit (menu / town) | 37.3 / 28.6 | 37.6 / 27.6 | 38.0 / 29.8 | 37.7 / 27.4 |
+
+**Result: the menu keeps +21% (93 -> 113 presents per 10 s), and town GPU time is back to the PR-in level (84.1 ms, v1 had 91.8).** Town presents are still about 3% below PR-in (82.5 vs 85-86) with GPU time, staging and committer time equal, so the remaining cost is the probe frames (town still re-checks about every 40 s) or CPU-side bookkeeping.
+
+- **Back-off:** in the menu the interval reached 80 s and held. In town every answer is "staged", but the interval goes 20 -> 40, holds at 40, reaches 80 once, then drops back to 40. The lines that hold or reset are mostly short samples (8/3 frames), so a short sample probably resets or holds the back-off instead of counting as a repeat (read from the log, not from the code).
+- **Next:** count a short sample with the same answer as a repeat, and let the interval keep growing (160-320 s) while the answer stays the same.
+
+Decision lines, verbatim (15):
+
+```
+[staging] adaptive: 0x2601512e0+0x140000 GPU 92.0 ms/frame staged, 121.5 in place (7/7 frames) -> staged (not measured), next probe in 20 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 104.1 ms/frame staged, 84.1 in place (14/7 frames) -> in place, next probe in 20 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 104.0 ms/frame staged, 84.3 in place (13/7 frames) -> in place, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 106.8 ms/frame staged, 85.1 in place (15/6 frames) -> in place, next probe in 80 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 97.4 ms/frame staged, 78.7 in place (13/8 frames) -> in place, next probe in 80 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 97.1 ms/frame staged, 79.0 in place (8/3 frames) -> in place, next probe in 80 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 84.0 ms/frame staged, 95.7 in place (13/8 frames) -> staged, next probe in 20 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 86.7 ms/frame staged, 116.1 in place (8/3 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.2 ms/frame staged, 116.7 in place (8/3 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.0 ms/frame staged, 116.9 in place (8/3 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.1 ms/frame staged, 117.4 in place (8/3 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 86.8 ms/frame staged, 117.4 in place (13/7 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.0 ms/frame staged, 117.4 in place (8/3 frames) -> staged, next probe in 80 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.3 ms/frame staged, 117.2 in place (14/7 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.2 ms/frame staged, 117.3 in place (13/8 frames) -> staged, next probe in 40 s
+```
 
 ## What is staged: trace (desktop)
 
@@ -183,6 +224,10 @@ Question: what exactly does the PR copy about 20 GB of per 10 s?
 | CPU % of one core (title / menu / garage) | 89 / 93 / 100 | 96 / 97 / 99 | 89 / 90 / 102 | 86 / 89 / 104 |
 | RAM peak working set / private MB | 7370 / 12368 | 7405 / 12723 | 7194 / 11763 | 7200 / 11936 |
 | VRAM peak MB | 3681 | 3622 | 3693 | 3709 |
+
+## Other title: Ghost of Yotei (desktop), not testable
+
+Tried in four setups (shader cache off, cold, warm, and the env list of my earlier world runs); in all of them both arms stay on a black screen or are stopped by the memory guard, the same in A and B. No data for #7618 on Yotei. [page](2026-10-28-ghost-of-yotei-written-only-staging-revert-not-testable.md)
 
 ## Same A/B on the AMD mini PC (Radeon 780M)
 

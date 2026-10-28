@@ -40,5 +40,6 @@ Full analysis: [ghost-of-yotei-speed.md](https://github.com/mrfelek/AnyPS5/blob/
 
 - **With the shader disk cache off (`ANYPS5_NO_SHADER_CACHE=1`), memory grows about 9 GB per minute** (host-side anonymous memory) until the system runs out. With the cache on it does not.
 - 32 GB of RAM is tight: runs swap heavily unless the browser is closed.
+- **On current main (`cc672fdfc6`, 28 October) it does not reach the world:** black screen after the logo in every setup tried (shader cache off: memory guard stops it at 17-19 GB; cache on, cold or warm, and my earlier world env list: black, a GPU queue stuck in `WAIT_REG_MEM`). So the #7618 staging A/B could not be run on it. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-28-ghost-of-yotei-written-only-staging-revert-not-testable.md)
 
 AI-assisted. Tested by me on my own machine.
