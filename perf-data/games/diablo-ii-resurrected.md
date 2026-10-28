@@ -6,6 +6,7 @@ Upstream discussion: [D#5146](https://github.com/boykopovar/AnyPS5/discussions/5
 
 | Phase | Date | Machine | Build | What | Headline | Page |
 |---|---|---|---|---|---|---|
+| Main menu + town | 2026-10-28 | Linux desktop | `0c6bca70d9` (#10894 head) | upstream #10894 per-use texture templates, off vs on | menu 90 -> 104 presents/10 s (+16%), town 80 -> 96 (+20%), town GPU 90.3 -> 67.2 ms/frame; resource cache misses -> 0; same picture | [run](../runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md#upstream-10894-wallisskill-menu-and-town) |
 | Character select | 2026-10-28 | Linux desktop | `04fefebe90` | per-use refresh fix prototype (A B A B) | resource cache misses 53k -> 0, committer 36-37 -> 24 us/commit, presents 96/90 -> 102/95 (+6%), then GPU-bound; same picture | [run](../runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md) |
 | Character select | 2026-10-28 | AMD mini PC | `e4bb5fc125` | per-use depth-plane refresh fix prototype (A B A B) | builds 32.8k -> 1.8-2.6k per 10 s, committer 47 -> 34-37 us/commit, same pictures; 54 presents either way (GPU-bound) | [run](../runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md#fix-prototype-keep-builds-whose-depth-plane-texture-is-refreshed-per-use-2026-10-28) |
 | Character select | 2026-10-25 | AMD mini PC | `e4bb5fc125` | committer split timers, descriptor set reuse A/B (local patch) | 53 presents/10 s either way; reuse cuts descriptor writes 30%, cost per draw unchanged (about 46 us) | [run](../runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md) |
