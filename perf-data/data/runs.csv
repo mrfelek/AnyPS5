@@ -83,3 +83,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 revert a293f7901b,b1 B,59,168.8,145.4,,,,,,10.1,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a2 A,84.0,119.7,84.4,,,,,,10.3,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 revert a293f7901b,b2 B,59,171.7,148.6,,,,,,10.0,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,B1,88.0,113.8,100.4,94.2,,,,,,runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6+indirect-no-read-probe,P1,93.5,107.2,100.0,99.5,,,,,,runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,B2,90.5,110.8,96.8,92.6,,,,,,runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6+indirect-no-read-probe,P2,101.0,99.8,95.0,99.0,,,,,,runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md

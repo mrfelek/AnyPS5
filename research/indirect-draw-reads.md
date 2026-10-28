@@ -16,6 +16,8 @@ Skipping the read (`APS5_PROBE_INDIRECT_NO_READ=1`, unsafe) removes the stall (3
 
 Put the draw on the GPU path: feed s20 from gl_BaseVertex and s21 from gl_BaseInstance (SPIR-V DrawParameters) and use gl_VertexIndex - gl_BaseVertex for the hardware vertex id. Open **#10359** (valenciana-nc) already sources start instance from BaseInstance; the base-vertex half is not covered. #9243 / #9248 (fisherjoey) cache CPU-path indirect draws but keep the read. It only pays once GPU time per frame drops below CPU time.
 
+Update 2026-10-28: on main `cc672fdfc6` with the float fix, the no-read probe removes the stall (3.4-3.7 s per 10 s, one indirect draw per frame, program 0x2b5167e00) and gives +6-11% presents on the D2R menu; the GPU is the limit again afterwards. A real fix has to defer or avoid that read without dropping the draw ([run](../perf-data/runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md), Run 2).
+
 Related merged work: #7930 (skip empty CPU-path indirect draws), #6931, #5979, #460, #6786, #8066. Closed unmerged: #7894 (non-indexed mesh indirect on GPU).
 
 Hot Wheels Infinite Rush (PPSA22408) also sees all its indirect draws empty-skipped; there `APS5_SYNC_DISPATCH=1` leaves the arguments zero, so it is not a read-too-early race (see [Hot Wheels](hot-wheels.md)).
