@@ -148,3 +148,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,b1 B per-use refresh,102,97.6,91.2,,,,,,10.0,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
 2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,a2 A,90,112.0,98.3,,,,,,9.9,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
 2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,b2 B per-use refresh,95,105.9,97.3,,,,,,9.7,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,0c6bca70d9 (#10894),A1 #10894 off,90,111.7,97.5,,,,,,9.8,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,0c6bca70d9 (#10894),B1 #10894 on,104,96.8,89.9,,,,,,9.9,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,0c6bca70d9 (#10894),A1 #10894 off,80,125.4,90.3,,,,,,10.8,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,0c6bca70d9 (#10894),B1 #10894 on,96,104.9,67.2,,,,,,10.2,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
