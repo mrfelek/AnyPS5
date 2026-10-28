@@ -168,3 +168,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + adaptive staging,b1 B,112.5,,,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a1 A (job 13),86,,,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 + adaptive staging,b1 B,81,,,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + adaptive staging v2,B,113.0,,75.7,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,A2,93.5,,95.2,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 + adaptive staging v2,B,82.5,,84.1,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,A2,85,,83.9,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md

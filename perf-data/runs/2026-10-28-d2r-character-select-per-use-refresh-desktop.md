@@ -72,6 +72,10 @@ Without the partial walk every per-use reuse falls back to a full walk, so reval
 
 **Way to go:** #10894's templates, with the full-walk fallback as the safe default until the partial walk agrees with the full walk on Diablo II; our prototype stays only as a reference.
 
+## Other title: Astro Bot (desktop)
+
+With #10894 off, Astro Bot's hub_crashsite gives only 6,574 draw and 1,260 dispatch refusals of this kind in about 170 s (Diablo II: 912,489), so the PR has nothing to act on there and the PR-on arm was not run. [page](2026-10-28-astro-bot-per-use-texture-templates-10894-scan.md)
+
 ## Upstream #10894 on the AMD mini PC (Radeon 780M)
 
 - **Machine:** AMD mini PC, Ryzen 9 PRO 8945HS, Radeon 780M (RADV, Mesa 26.0.8). See [machines.md](../machines.md).
