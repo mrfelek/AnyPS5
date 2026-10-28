@@ -1,0 +1,194 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp b/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp
+index a65ab38f73..d9bb829822 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp
+@@ -643,6 +643,21 @@ private:
+     std::uint64_t provedProof = 0;
+     std::uint64_t provedPending = 0;
+     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
++    bool revalidateProofs(std::span<const CompiledShader> shaders, ProofReport* report);
++    // APS5_PER_USE_REFRESH=1: the lookups of the depth textures remade per use (stencil copies,
++    // depth plane copies), repeated on every reuse so their copies are recorded again.
++    struct PerUseRefresh {
++        std::size_t index = 0;
++        std::array<std::uint32_t, 8> words{};
++        GuestTextureResource resource{};
++        VkComponentMapping components{};
++        std::uint64_t guestBytes = 0;
++        bool depthCompare = false;
++        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
++    };
++    std::vector<PerUseRefresh> perUseRefreshes;
++    bool refreshPerUse();
++    bool perUseRefreshed(std::size_t index) const;
+     // The import table's identity when the direct regions' serials were last proved.
+     HostImportsProof importsProof;
+     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
+index 774f8691cb..f1965c06a4 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
+@@ -2595,6 +2595,16 @@ bool TemplateDataRefresh() {
+     return enabled;
+ }
+ 
++bool PerUseRefreshReuse() {
++    static const bool enabled = std::getenv("APS5_PER_USE_REFRESH") != nullptr;
++    return enabled;
++}
++
++std::array<std::atomic<std::uint64_t>, 3>& TmpPerUseRefreshCounts() {
++    static std::array<std::atomic<std::uint64_t>, 3> counts{};
++    return counts;
++}
++
+ bool DataRole(ShaderRecompiler::DescriptorRole role) {
+     return role == ShaderRecompiler::DescriptorRole::ShaderData || role == ShaderRecompiler::DescriptorRole::FlattenedSrt;
+ }
+@@ -2632,7 +2642,7 @@ void ShaderResources::noteReusable() {
+     reusable = false;
+     directRegions.clear();
+     if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
+-    if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
++    if (std::any_of(textures.begin(), textures.end(), [&](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse() && !perUseRefreshed(static_cast<std::size_t>(&texture - textures.data())); })) return;
+     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
+     const auto regions = guestMemory.DirectRegions();
+     if (!regions.has_value()) return;
+@@ -2679,6 +2689,10 @@ void ShaderResources::reportDescriptorCaches() const {
+     const auto samplerHits = context.samplerCache != nullptr ? context.samplerCache->Hits() : 0;
+     const auto samplerMisses = context.samplerCache != nullptr ? context.samplerCache->Misses() : 0;
+     AgcDriver::ProfilePrint_nid_no_patch("[descriptors] layouts %llu hits / %llu created, sets %llu from %llu pools and %llu dedicated pools, samplers %llu hits / %llu created\n", static_cast<unsigned long long>(descriptors.layoutHits), static_cast<unsigned long long>(descriptors.layoutMisses), static_cast<unsigned long long>(descriptors.sets), static_cast<unsigned long long>(descriptors.pools), static_cast<unsigned long long>(descriptors.dedicatedPools), static_cast<unsigned long long>(samplerHits), static_cast<unsigned long long>(samplerMisses));
++    if (PerUseRefreshReuse()) {
++        auto& refreshes = TmpPerUseRefreshCounts();
++        AgcDriver::ProfilePrint_nid_no_patch("[per-use] refresh on reuse (cumulative): same texture %llu, other texture %llu\n", static_cast<unsigned long long>(refreshes[0].load()), static_cast<unsigned long long>(refreshes[1].load()));
++    }
+ }
+ 
+ template<typename TVisitor>
+@@ -3130,7 +3144,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
+         auto& surface = validatedTextures[i];
+         if (!surface.valid) return fail(FastFail::NoRecord);
+         if (surface.depth) {
+-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
++            if (!perUseRefreshed(i) && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
+             continue;
+         }
+         if (textures[i]->Released()) return fail(FastFail::Replaced);
+@@ -3258,7 +3272,7 @@ bool ShaderResources::fastRevalidateEach() {
+         auto& surface = validatedTextures[i];
+         if (!surface.valid) return false;
+         if (surface.depth) {
+-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
++            if (!perUseRefreshed(i) && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
+             continue;
+         }
+         if (textures[i]->Released()) return false;
+@@ -3455,6 +3469,31 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
+ }
+ 
+ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
++    if (!revalidateProofs(shaders, report)) return false;
++    return perUseRefreshes.empty() || refreshPerUse();
++}
++
++bool ShaderResources::perUseRefreshed(std::size_t index) const {
++    return std::any_of(perUseRefreshes.begin(), perUseRefreshes.end(), [&](const PerUseRefresh& refresh) { return refresh.index == index; });
++}
++
++bool ShaderResources::refreshPerUse() {
++    auto& log = lookupLog();
++    const auto logged = log.size();
++    bool same = true;
++    for (const auto& refresh : perUseRefreshes) {
++        const auto texture = cachedTexture(context, refresh.words, refresh.resource, refresh.components, refresh.guestBytes, refresh.depthCompare, refresh.viewType);
++        if (texture != textures[refresh.index]) {
++            same = false;
++            break;
++        }
++    }
++    log.resize(std::min(log.size(), logged));
++    TmpPerUseRefreshCounts()[same ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
++    return same;
++}
++
++bool ShaderResources::revalidateProofs(std::span<const CompiledShader> shaders, ProofReport* report) {
+     if (EpochProofs()) {
+         const auto epoch = GuestMemory::CollectEpoch();
+         const auto proof = GuestMemory::ProofSerial();
+@@ -4896,6 +4935,11 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
+             }
+             if (texture == nullptr) texture = cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType);
+             if (resource.dimension == TextureDimension::k2DMsaa) multisampleSources.push_back(resource.baseAddress);
++            if (PerUseRefreshReuse() && texture->RefreshedPerUse() && !firstSample && words.size() == 8) {
++                PerUseRefresh refresh{textures.size(), {}, resource, components, guestBytes, depthCompare, multisampleViewType};
++                std::copy(words.begin(), words.end(), refresh.words.begin());
++                perUseRefreshes.push_back(refresh);
++            }
+             bool baseLevel = false;
+             if (element < binding.imageUnnormalized.size() && binding.imageUnnormalized[element]) {
+                 const auto range = texture->SampledViewRange(firstLayer);
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp
+index 108954d47f..a7a76e9e38 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp
+@@ -287,6 +287,39 @@ void ArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std
+     }
+ }
+ 
++// The same dispatch twice over a 3-slice D32 array, the depth surface redrawn between them: the
++// second reads the new depth, whether its build is reused (APS5_PER_USE_REFRESH) or made again.
++void RedrawnArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
++    auto* base = block.At(ArrayOffset);
++    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.25f);
++    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
++    FillSlice(base + 2u * SliceBytes, SliceBytes, Bits(0.75f), 4u);
++    const Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
++    std::vector<std::uint32_t> userData(16, 0u);
++    const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
++    const auto texture = TextureDescriptor(base, shape);
++    std::copy(out.begin(), out.end(), userData.begin());
++    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
++    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(LoadArray.data()), std::as_bytes(std::span(LoadArray))}}};
++    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
++    ShaderRecompiler::RecompileRequest request{
++        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(LoadArray.data()), LoadArray, 0, {}},
++        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
++        device.Target(),
++        {0, 0, 0, 128}
++    };
++    request.useCache = false;
++    const auto result = ShaderRecompiler::Recompile(request);
++    const std::array<float, 3> depths{0.25f, 0.625f, 0.125f};
++    for (std::size_t round = 0; round < depths.size(); ++round) {
++        if (round != 0) DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, depths[round]);
++        std::fill(output.begin(), output.end(), 0xdeadbeefu);
++        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadArray.data()));
++        device.WaitIdle();
++        Expect(output, Bits(depths[round]), "D32 array slice 0 after redraw " + std::to_string(round));
++    }
++}
++
+ // A cube over six square D32 slices: face 0 from the live surface, faces 1-5 from guest memory.
+ void CubeCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+     auto* base = block.At(CubeOffset);
+@@ -489,6 +522,8 @@ int main(int argc, char** argv) {
+         present();
+         CubeCase(*device, block, output);
+         present();
++        RedrawnArrayCase(*device, block, output);
++        present();
+         IntegerCase(*device, block, output);
+         present();
+         DepthBitsArrayCase(*device, block, output);
+diff --git a/docs/dev/ENVIRONMENT.md b/docs/dev/ENVIRONMENT.md
+index 05678c738d..4a6d0af0cd 100644
+--- a/docs/dev/ENVIRONMENT.md
++++ b/docs/dev/ENVIRONMENT.md
+@@ -364,6 +364,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_NO_WRITTEN_SHADOW` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | binds written staging elements in place instead of through the written shadow |
+ | `APS5_NV_DIAGNOSTICS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | creates the device with VK_NV_device_diagnostics_config and VK_NV_device_diagnostic_checkpoints where supported, for Nsight Aftermath crash dumps |
+ | `APS5_PACKET_EPOCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitStatistics.cpp` |  | makes queue workers bump the collect epoch before every packet |
++| `APS5_PER_USE_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | lets a build that samples a depth plane or stencil copy remade per use be reused: each reuse repeats that texture's lookup, which records its copy again, and the build is made anew when the lookup returns another texture; prints a `[tmp-reuse]` refresh line with `APS5_PROFILE_DRAW` and `APS5_TMP_COMMITTER_SPLIT` |
+ | `APS5_PIPELINED_DRAWS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp` | 8 | depth of the queue-0 draw pipeline: 0 records draws inline, 1 selects the default depth of 8, and any other value is the depth capped at 256 |
+ | `APS5_PIPELINE_DISPATCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | records an eligible dispatch as an item in the queue-0 pipeline instead of running it inline; an empty value or one starting with `0` leaves it off |
+ | `APS5_PIPELINE_DRAIN_FILLS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | runs queue-0 buffer fills through the draw pipeline to keep their order; any value stores them in place instead |
