@@ -107,6 +107,33 @@ Question: what exactly does the PR copy about 20 GB of per 10 s?
 | a2 A | 160 (150-166) | 62.7 | 18.4 | 39.9 | draw 19.0, storage-upload 4.4, copy 3.2, fill 3.2 | 5 in 791 / 5 in 323 | 7686 | 68.9 | 24022 |
 | b2 B | 165 (157-169) | 60.6 | 18.3 | 38.4 | draw 18.8, storage-upload 4.0, copy 3.1, fill 3.0 | 5 in 799 / 5 in 323 | 7525 | 67.3 | 23504 |
 
+## Other title: Hot Wheels Infinite Rush, title, menu and garage (Windows laptop)
+
+- **Date / machine:** 2026-10-28, Windows laptop (RTX A2000 Laptop, NVIDIA 610.60). See [machines.md](../machines.md).
+- **Why an older base:** Hot Wheels no longer boots on current main on Windows. On `cc672fdfc6`, `e2e27a3ba9` and `3a40945e62` every run stopped about 10 s after launch with `sceHttp2GetMemoryPoolStats not implemented` (0xC0000409). The cause is `db57916260` ("feat(http2): send synchronous HTTP/2 requests over TLS"), after which that call ends in a not-implemented stub for a valid context. So this A/B uses `6d0139cd33`, which predates both that commit and the PR.
+- **Builds:** A = `6d0139cd33` + the GameUpdate "no update" fix; B = A + cherry-pick of `a293f7901b` (clean). Audio muted. Order A1 B1 A2 B2; all four reached the garage (no race: race load takes over 5 minutes on this laptop).
+- **Phases:** title idle +152..+250 s, title to menu +250..+426 s, garage 150 s at +580..+730 s.
+
+**Result: no measurable effect on Hot Wheels.** Staging volume and region size are the same in both builds (about 1.5 GB each way per 10 s at the title and 0.7 GB in the garage, regions of 250 / 226 KiB), and GPU time per frame differs by 1% or less. The written-only path is either not taken here or changes nothing. B1's title phases are an outlier (shadow publish about 940 against 1,710 ms, presents 41.6 against about 36); B2 on the same build matches A, so that is run-to-run noise.
+
+| phase / metric (per 10 s) | A1 | B1 | A2 | B2 |
+|---|---|---|---|---|
+| title idle: presents | 35.8 | 41.6 | 37.0 | 36.4 |
+| title idle: GPU ms/frame | 116.4 | 112.4 | 111.2 | 112.1 |
+| title idle: staging KiB in (= back) | 1,477,284 | 1,712,520 | 1,522,725 | 1,502,430 |
+| title idle: regions / average KiB | 5905 / 250.2 | 6843 / 250.3 | 6086 / 250.2 | 6006 / 250.2 |
+| title idle: shadow-publish / storage-upload / draw ms | 1704 / 899 / 525 | 944 / 763 / 598 | 1725 / 908 / 517 | 1726 / 908 / 514 |
+| title to menu: presents | 35.4 | 39.9 | 35.5 | 35.4 |
+| title to menu: GPU ms/frame | 112.4 | 113.1 | 110.5 | 110.9 |
+| title to menu: staging KiB in | 1,458,189 | 1,649,600 | 1,474,060 | 1,463,017 |
+| garage: presents | 9.73 | 9.79 | 9.57 | 9.36 |
+| garage: GPU ms/frame | 155.2 | 155.8 | 154.5 | 154.5 |
+| garage: storage-upload / shadow-publish / draw ms | 2516 / 2071 / 298 | 2482 / 2014 / 304 | 2742 / 2166 / 292 | 2765 / 2114 / 283 |
+| garage: staging KiB in, regions / average KiB | 704,649, 3113 / 226.4 | 710,523, 3141 / 226.2 | 674,148, 2995 / 225.1 | 659,316, 2928 / 225.2 |
+| CPU % of one core (title / menu / garage) | 89 / 93 / 100 | 96 / 97 / 99 | 89 / 90 / 102 | 86 / 89 / 104 |
+| RAM peak working set / private MB | 7370 / 12368 | 7405 / 12723 | 7194 / 11763 | 7200 / 11936 |
+| VRAM peak MB | 3681 | 3622 | 3693 | 3709 |
+
 ## Same A/B on the AMD mini PC (Radeon 780M)
 
 - **Date / machine:** 2026-10-28, AMD mini PC (Ryzen 9 PRO 8945HS, Radeon 780M integrated GPU, RADV, Mesa 26.0.8). See [machines.md](../machines.md).

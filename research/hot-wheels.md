@@ -2,6 +2,10 @@
 
 Runs: [race load](../perf-data/runs/2026-10-24-hot-wheels-race-load.md), [heap copy trace](../perf-data/runs/2026-10-24-hot-wheels-heap-copy-trace.md), [AMD import budget A/B](../perf-data/runs/2026-10-24-hot-wheels-race-load-amd-import-budget-ab.md), [title screen](../perf-data/runs/2026-10-24-hot-wheels-title-baseline.md). Upstream discussion: D#6895. The game needs a GameUpdate "no update" fix to get past its update check (#10614).
 
+## Boot on current main (Windows), 28 October
+
+On `cc672fdfc6`, `e2e27a3ba9` and `3a40945e62` the game stops about 10 s after launch with `sceHttp2GetMemoryPoolStats not implemented` (0xC0000409). It starts with `db57916260` ("feat(http2): send synchronous HTTP/2 requests over TLS"), after which that call ends in a not-implemented stub for a valid context; `6d0139cd33` boots. **Next:** implement `sceHttp2GetMemoryPoolStats` for a valid context (report an empty pool) upstream. ([run where it was found](../perf-data/runs/2026-10-28-d2r-written-only-staging-revert-ab.md#other-title-hot-wheels-infinite-rush-title-menu-and-garage-windows-laptop))
+
 ## Race load: the 4 GiB heap copy
 
 - About 9 minutes on the Linux desktop with a warm shader cache (14 min cold). During the slow part there are ~460-541 guest uploads of 4095 MiB (about one per second, 0.5-0.6 s each), from small compute dispatches (12x1x1 to 56x1x1) of two large programs, mostly on queue 0x20 (GPU mutex held up to 573-1288 ms per dispatch). They stop right when the race starts.
