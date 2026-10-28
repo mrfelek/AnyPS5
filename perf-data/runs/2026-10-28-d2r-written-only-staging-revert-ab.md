@@ -175,7 +175,7 @@ Decision lines, verbatim (15):
 
 - **Back-off:** 20 -> 40 -> 80 -> 160 s, then it holds at 160 s. At the change from menu to town it sees the frame GPU time jump (79.4 -> 202.6 ms) and checks again at once, then switches the 202.5 MiB element to staged.
 - Loading the save into town took longer in this run (+768 s; A2 +556 s, earlier about +390 s). It happens before the measured windows and does not affect them.
-- **Next:** one more pair to confirm (A B on the same day), then decide with Andrzej whether it goes upstream as a follow-up to #7618.
+- **Next:** one more pair to confirm (A B on the same day), then decide whether it goes upstream as a follow-up to #7618.
 
 Decision lines, verbatim (12):
 
