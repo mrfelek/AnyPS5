@@ -124,3 +124,8 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Hot Wheels Infinite Rush,PPSA22408,garage,Windows laptop,6d0139cd33 + a293f7901b,B1,9.79,,155.8,,,,,,3.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Hot Wheels Infinite Rush,PPSA22408,garage,Windows laptop,6d0139cd33,A2,9.57,,154.5,,,,,,3.7,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Hot Wheels Infinite Rush,PPSA22408,garage,Windows laptop,6d0139cd33 + a293f7901b,B2,9.36,,154.5,,,,,,3.7,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125,baseline rerun,54,186.5,182.3,,,,,,2.0,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,A1,53.6,,182.4,,,,,,1.9,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,B1 per-use refresh,54.0,,181.8,,,,,,1.9,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,A2,53.0,,183.6,,,,,,2.0,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,B2 per-use refresh,53.8,,182.9,,,,,,2.0,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
