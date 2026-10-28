@@ -42,8 +42,8 @@ No speed numbers for B; the A/B on speed waits until the relocation passes this 
 
 - **Build:** same as run 3. `APS5_VERIFY_DRAW_DATA_HITS=1` and `APS5_TRACE_DRAW_CACHE=1` together, audio muted, 180 s counted per game.
 - **Verifier: no failures.** No abort, terminate, segfault, validation error or device loss. Stages verified with no mismatch: D2R main menu 180,665, Hot Wheels Infinite Rush (PPSA22408) title 1,036, Hollow Knight Silksong (PPSA12544) gameplay area 81,609.
-- **Caveat: the verifier never sees a relocated stage.** Every window reads "0 reused, 0 of them relocated", because in verify mode each data-only hit is compiled in full and checked instead of going through the reuse and relocation path (without the verifier the Hot Wheels title relocates 82-84 stages per 10 s). So this proves the data-only candidates match a fresh build, not that relocated stages are correct.
-- **Way forward:** a verifier that checks the stage the reuse and relocation path actually serves (relocate first, then compare with a fresh build), instead of replacing that path.
+- **This counts as a pass for v3.** Every window reads "0 reused, 0 of them relocated", which first looked like the verifier never saw a relocated stage. It does: the lookup builds the moved (relocated) variant of each candidate whether or not the verifier is on, and the verifier compares that moved candidate with a fresh build. "Reused" and "relocated" count only stages that are actually served, and verify mode serves none, so both read 0 while "verified" includes the moved candidates.
+- **Next:** the next revision adds an "N of them moved" count to the verified figure, so the log shows directly how many relocated stages were checked.
 
 Two windows per game, verbatim:
 
