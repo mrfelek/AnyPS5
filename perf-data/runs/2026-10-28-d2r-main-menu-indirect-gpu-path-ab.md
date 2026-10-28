@@ -75,6 +75,43 @@ B3 (routes on)
 
 **Next:** find out what the NVIDIA driver analyses each frame on the route path (a buffer usage or descriptor change per draw is the likely cause), then propose the base-vertex half to #10359.
 
+## Same build on the AMD mini PC (Radeon 780M): routes on is much slower
+
+- **Machine:** AMD mini PC, Radeon 780M (RADV, Mesa 26.0.8); shader draw parameters supported. See [machines.md](../machines.md).
+- **Build and arms:** the same diff on upstream `cc672fdfc6`, Release; A = routes off, B = routes on. Draw and GPU profiling and the indirect trace on, audio muted, memory guard on. Unit tests: 12 of 12 pass.
+- **Runs:** A1 and B1 are a like-for-like pair on the menu (a script that presses a button every 2 s until the menu, then 30 s settle + 180 s). A second pair with the menu-and-town script (one button press, shader disk cache off) gave only the A arm: B2 was stopped by the memory guard at boot (a known boot-time memory spike that also hits plain main), so **B has no town data**. Because the two scripts give very different A numbers, only A1 against B1 is compared.
+
+**Result: with routes on, the menu loses about 60% of its presents on the 780M (about 50 -> 19 per 10 s) and GPU busy per present rises from about 173 to about 250 ms. The opposite of the RTX 3080 Ti.** No validation errors, device loss or terminate.
+
+| per 10 s | A1 (routes off) | B1 (routes on) |
+|---|---|---|
+| presents | 48-54 (mostly 50) | 18-19 |
+| GPU busy per present ms | 172-177 | 236-265 |
+| GPU time ms (timed ranges) | 455-486 | 202-223 |
+| committer us per commit | 111-128 | 168-180 |
+| argument reads ms | 0.1 (513.8 / 204.0 / 82.2 / 131.3 in 4 of 18 windows) | 0.0-0.1 in all 18 |
+| GPU-path ("in-place") indirect draws | 0 | 18.3 |
+| top threads % | 55, 38, 8, 8, 6 | 55, 46, 8, 6 |
+| RSS max GiB | 9.3 | 9.2 |
+
+- In this menu-only scene the CPU argument read is not the limit on this machine (about 0.1 ms per 10 s in A), so B has nothing to gain there, and its GPU-path draws cost far more GPU time per frame. No driver thread shows up under its own name; in B the second emulator thread rises from 38% to 46%.
+- B logs both a GPU line and a CPU line per draw, as on the desktop:
+
+```
+329x [draw] indirect 0x... args 0x... stride 16 count 1 locs base=0x...(s20) inst=0x...(s21) idx=none analyzer v=-1 i=-1 shared=0/0 conflict=0/0 indx=0 -> cpu (patched SGPR not folded)
+329x [draw] indirect 0x... args 0x... stride 16 count 1 locs base=0x...(s20) inst=0x...(s21) idx=none analyzer v=-1 i=-1 shared=0/0 conflict=0/0 indx=0 -> gpu vertex=in-place instance=in-place
+```
+
+- **Routes off with the menu-and-town script (A2):** menu 57 presents, GPU busy 170-176 ms, committer 44 us, argument reads 5.2 s per 10 s (as in the earlier AMD runs); town 59 presents, GPU busy 141-146 ms, argument reads about 0. In town about 3,100 indirect draws per 10 s already take the GPU path even with routes off (their analyser finds the registers), so the town does not depend on this change:
+
+```
+29007x [draw] indirect 0x... args 0x... stride 20 count 1 locs base=0x...(s28) inst=0x...(s29) idx=none analyzer v=28 i=29 shared=0/0 conflict=0/0 indx=0 -> gpu vertex=in-place instance=in-place
+17580x [draw] indirect 0x... args 0x... stride 20 count 1 locs base=0x...(s24) inst=0x...(s25) idx=none analyzer v=24 i=25 shared=0/0 conflict=0/0 indx=0 -> gpu vertex=in-place instance=in-place
+879x [draw] indirect 0x... args 0x... stride 16 count 1 locs base=0x...(s20) inst=0x...(s21) idx=none analyzer v=-1 i=-1 shared=0/0 conflict=0/0 indx=0 -> cpu (patched SGPR not folded)
+```
+
+**Not ready as is:** a fix that speeds up NVIDIA by 6-16% and slows the 780M by about 60% cannot go upstream in this form. **Next:** a like-for-like pair with the menu-and-town script on the 780M (where A does show the 5.2 s argument stall), and find what makes the route-path draw so expensive on RADV.
+
 ## Indirect draw trace lines, verbatim
 
 A1 and A2, one line each:
