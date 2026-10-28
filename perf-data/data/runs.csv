@@ -143,3 +143,4 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 64 MiB,d2 D,60,168.1,133.1,,,,,,10.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,A3 routes off,95.0,106.3,94.1,,,,,,,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,B3 routes on,100.0,100.8,95.7,,,,,,,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
+2026-10-28,Hollow Knight: Silksong,PPSA12544,first area,AMD mini PC,cc672fdfc6,indirect survey,600,,,,,,,,,runs/2026-10-28-indirect-draw-survey.md

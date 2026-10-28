@@ -41,6 +41,20 @@ indirect: gpu-side 390 (390 rewritten), cpu-side 46 ( non-vertex path 46), empty
 
   About 650 of them per 10 s spend about 0.9 s inside the device call (max 81.6 ms), almost all of it binding images ("resources: B images"), with 33 ms of hook waits.
 
-**Result:** Castlevania has no indirect work at all. Hot Wheels has the same kind of CPU-path indirect draws, but they cost only 20-30 ms per 10 s and give a different reason ("non-vertex path"), which the base-vertex fix does not cover. In this sample, the large indirect stall is specific to the Diablo II menu. **Next for Hot Wheels:** the image binding time inside indirect dispatches (about 0.9 s per 10 s) is the larger indirect-related cost.
+## AMD mini PC (Radeon 780M, RADV, Mesa 26.0.8)
+
+### Hollow Knight: Silksong (PPSA12544), main `cc672fdfc6`
+
+- Fresh runtime, first gameplay area, 180 s counted. No validation errors, device loss or terminate.
+- **No indirect draws at all**, over the whole log: no indirect draw trace lines, no CPU-path lines, no indirect summaries, no hook syncs, no argument-read section in any draw line, and "indirect-args 0" in all 44 barrier lines. 600 presents per 10 s.
+- For contrast, on the same machine the Diablo II menu skips about 1,000-1,100 empty indirect draws per 10 s and spends 5.2-6.0 s per 10 s reading their arguments ([character select page](2026-10-25-d2r-character-select-amd-draw-set-reuse.md)).
+
+One counted window, verbatim:
+
+```
+[draws] 95022 draws over 10 s (95022 recorded avg 27 us, of them 0 with completion; 0 recorded then waited avg 0 us; 0 synchronous avg 0 us; render passes 15903 begun (new batch 2708, command 5015, key 1177, image 7003), 79119 draws continued one; waited or synchronous because:): validate=62.2ms vertex=335.3ms setup=51.6ms readTarget=343.2ms (93822 resident lookups, 0 of them >= 1 ms = 0.0; target lookups: full-scissor 93822 / partial 0 / pages walked 6009360 / 333011 us) prepare=249.4ms lookup=546.0ms resources=2.2ms (bindings 0.0, upload 0.0, descriptors 0.0, other 0.0 of which 0.0 in 0 address-based builds) pipeline=205.3ms record=657.6ms keep=89.2ms; per kind (avg us, count): recipe hit 65 (207) template hit 27 (94815) build 0 (0) BDA 0 (0); longest draw 1.0 ms, longest phase of any draw: validate 0.5 vertex 1.0 setup 0.7 readTarget 0.9 prepare 0.8 lookup 0.7 pipeline 0.8 record 0.6 keep 0.8; hook waits inside draws 0.0 ms (max 0.0; the draws' own syncs, 0.0 ms, not counted); skipped packets: nothing to draw 0 in 0.0 ms prechecked 0 in 0.0 ms thrown 0 in 0.0 ms; recipe hits 207, misses by reason: not recordable 0 target gone 0 template gone 0 objects gone 0 proof 0
+```
+
+**Result:** Castlevania and Silksong have no indirect work at all. Hot Wheels has the same kind of CPU-path indirect draws, but they cost only 20-30 ms per 10 s and give a different reason ("non-vertex path"), which the base-vertex fix does not cover. In this sample, the large indirect stall is specific to the Diablo II menu. **Next for Hot Wheels:** the image binding time inside indirect dispatches (about 0.9 s per 10 s) is the larger indirect-related cost.
 
 AI-assisted. Tested by me on my own machine.
