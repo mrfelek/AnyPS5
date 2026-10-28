@@ -75,3 +75,11 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,e2e27a3ba,run 1,32.7,,99.1,,,,,,,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
 2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,e2e27a3ba,run 2,38.3,,101.2,,,,,,,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
 2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,e2e27a3ba,run 3,38.7,,101.2,,,,,,,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,a1 A,85.5,117.6,103.5,,,,,,10.1,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 revert a293f7901b,b1 B,109.0,92.3,77.9,,,,,,9.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,a2 A,95.0,105.8,95.1,,,,,,9.7,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 revert a293f7901b,b2 B,112.0,90.0,76.3,,,,,,9.3,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a1 A,73.0,138.0,93.9,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 revert a293f7901b,b1 B,59,168.8,145.4,,,,,,10.1,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a2 A,84.0,119.7,84.4,,,,,,10.3,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 revert a293f7901b,b2 B,59,171.7,148.6,,,,,,10.0,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
