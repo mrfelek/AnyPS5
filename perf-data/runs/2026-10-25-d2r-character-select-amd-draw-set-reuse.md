@@ -75,8 +75,49 @@ Window 2:
 [rescache] miss churn (draws), first differing word by role: GuestImages 5 (T# word 1/0/0/4/0/0/0/0); layout 4, draw target/index 160, same key 278499 (not inserted or evicted), first seen 91
 ```
 
+## Control: baseline rerun (2026-10-28)
+
+The baseline build run again exactly as on 25 October, to check that the machine itself had not become slower: committer 46.4 / 46.5 us per commit (45.6 before), recorded draw average 43 us, vertex phase 260.7 / 261.8 ms and upload 94.1 / 94.8 ms per 10 s (248.8 / 92.0 before), 54 presents per 10 s, frame p50 186.5 ms, GPU busy 182.3 ms per present, CPU total 135%. Import lookup 1,718 ms per 10 s:
+
+```
+[buffers] 654000 uploads: import lookup 1718 ms, buffer allocation 1 ms, guest read 0 ms; copies on the GPU: 7359 regions (17642778 KiB) copied out of imports, 7359 written sub-ranges (17642778 KiB) copied back, 0 staging stores by the CPU at write-back
+```
+
+So the slowdown of the counter build above comes from that build, not from the machine.
+
+## Fix prototype: keep builds whose depth-plane texture is refreshed per use (2026-10-28)
+
+Question: the counters above show the builds are blocked because a texture is "refreshed per use". In this menu that texture is always a depth-plane copy. If the refresh is done on each reuse instead of forcing a new build, can the builds be kept?
+
+- **Build:** upstream `e4bb5fc125` + [per-use-refresh-p1.diff](../../research/patches/per-use-refresh-p1.diff), Release. Not upstream. Arms in one binary: A = default, B = `APS5_PER_USE_REFRESH=1`. Split timers on in both.
+- **Scene:** character select, menu at 34-36 s, 30 s settle + 180 s counted, no input, audio muted. Order A1 B1 A2 B2. No validation error, device loss or terminate in any run.
+- **Unit tests:** the depth-plane sampling tests (with a new redrawn-array case) pass with and without the switch. The recorder tests exit with "a scan under a pending write was kept", which also happens on the same base without this patch.
+
+**Result: about 30,000 builds per 10 s become template hits, committer time drops about 25%, and the pictures are the same. Presents stay at 54 because this menu is GPU-bound on the 780M (GPU busy about 182 of 186 ms per frame).**
+
+Last two counted windows:
+
+| metric | A1 | A2 | B1 | B2 |
+|---|---|---|---|---|
+| presents /10 s | 54, 54 | 52, 54 | 54, 54 | 54, 54 |
+| committer us per commit | 47.3, 47.2 | 49.0, 47.4 | 36.7, 37.0 | 34.4, 34.5 |
+| recorded draw average us | 44, 44 | 46, 44 | 32, 32 | 31, 31 |
+| template hits / builds per 10 s | 41453 / 32778, 41452 / 32778 | 40694 / 32455, 41142 / 32385 | 71718 / 2517, 71643 / 2607 | 72049 / 2154, 72434 / 1816 |
+| resource cache draw misses per 10 s | about 31.1-31.5k | about 31.1-31.5k | 2064, 2244 | 1338, 662 |
+| GPU busy per present ms (median) | 182.4 | 183.6 | 181.8 | 182.9 |
+| top two threads % | 44 / 39 | 45 / 40 | 40 / 40 | 38 / 38 |
+| CPU total % | 134 | 135 | 129 | 125 |
+| queue worker busy % | 32-33 | 32-33 | 26-28 | 26-28 |
+
+- Draw phases: resources about 1,380-1,442 ms per 10 s in A against 43-72 ms in B; lookup rises from about 348-365 to 690-736 ms and record from about 636 to 706-727 ms, so part of the saving moves there.
+- Reasons: in A the per-use kind is 100% "depth plane copy" (about 613,000 cumulative). In B "texture refreshed per use" is 0 and the refresh happens on reuse instead (about 584,000-613,000, same texture).
+- Memory is the same in all four: RSS 8.2-8.4 GiB, VRAM 1.91-1.97 GiB, GTT 11.2-12.2 GiB.
+- **Picture:** GPU readbacks at +15, +121 and +177 s. B differs from A1 no more than A2 or the 25 October baseline do (mean pixel difference 2.1-2.7, 1.3-2.0% of pixels over 24, from the idle animation). By eye the same screen: character, weapon glow, ground shadows, campfire and depth effects all intact.
+
+**Next:** a CPU saving only shows up as FPS where the CPU is the limit, so measure this on a CPU-bound scene (the D2R menu on the RTX 3080 Ti, or the Sonic 2 menu), and run the draw verifier with the switch on before proposing it upstream.
+
 ## Ruled out, and what to do instead
 
-Descriptor set reuse is ruled out as a way to cut per-draw cost: descriptor updates are about 3% of it. **Instead:** go after the larger pieces: the vectors phase (76.8 of 118.5 us per draw packet), the 5.5 s per 10 s spent reading empty indirect draws before skipping them (about 5.2 ms each), resource cache entries rebuilt under the same key (mostly blocked by "texture refreshed per use", see above), and the per-draw buffer snapshots (3.3 us). Name the threads so committer time and queue-worker time can be measured separately. On this machine the GPU is close to full as well, so a CPU saving alone would not raise FPS much.
+Descriptor set reuse is ruled out as a way to cut per-draw cost: descriptor updates are about 3% of it. **Instead:** go after the larger pieces: the vectors phase (76.8 of 118.5 us per draw packet), the 5.5 s per 10 s spent reading empty indirect draws before skipping them (about 5.2 ms each), resource cache entries rebuilt under the same key (blocked by "texture refreshed per use"; the fix prototype above keeps them, committer -25%), and the per-draw buffer snapshots (3.3 us). Name the threads so committer time and queue-worker time can be measured separately. On this machine the GPU is close to full as well, so a CPU saving alone would not raise FPS much.
 
 AI-assisted. Tested by me on my own machine.

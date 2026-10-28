@@ -1,0 +1,980 @@
+diff --git a/core/libs/prx/libSceAgcDriver/CMakeLists.txt b/core/libs/prx/libSceAgcDriver/CMakeLists.txt
+index f86e56dca..617270c77 100644
+--- a/core/libs/prx/libSceAgcDriver/CMakeLists.txt
++++ b/core/libs/prx/libSceAgcDriver/CMakeLists.txt
+@@ -1757,8 +1757,10 @@ if(BUILD_TESTING)
+     set_tests_properties(agc_uncounted_passes PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+     add_test(NAME agc_draw_descriptors COMMAND agc_driver_recorder_tests --draw-descriptors-only)
+     set_tests_properties(agc_draw_descriptors PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
++    add_test(NAME agc_draw_set_reuse COMMAND agc_driver_recorder_tests --draw-set-reuse-only)
++    set_tests_properties(agc_draw_set_reuse PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 ENVIRONMENT "APS5_DRAW_SET_REUSE=1;APS5_RELEASE_ON_UNLOCK=1")
+     if(WIN32)
+-        set_tests_properties(agc_pending_key_stores agc_shadowed_key_stores agc_sample_dumps agc_uncounted_passes agc_draw_descriptors PROPERTIES ENVIRONMENT_MODIFICATION
++        set_tests_properties(agc_pending_key_stores agc_shadowed_key_stores agc_sample_dumps agc_uncounted_passes agc_draw_descriptors agc_draw_set_reuse PROPERTIES ENVIRONMENT_MODIFICATION
+             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+     endif()
+     add_test(NAME agc_driver_host_import_lifetime COMMAND agc_driver_recorder_tests --host-import-lifetime-only)
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+index ee03e283f..d2fc598ec 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+@@ -1,3 +1,4 @@
++#include "prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+@@ -1090,6 +1091,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+ }
+ 
+ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey) {
++    Graphics::TmpSplit::Timer split(Graphics::TmpSplit::CommitLock);
+     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+     if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
+@@ -1100,8 +1102,10 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
+             if (std::uncaught_exceptions() == 0) driver.submitDueAfterCommit(device.get());
+         }
+     } submitDue{*this, localDevice};
++    split.Next(Graphics::TmpSplit::CommitLabels);
+     recordLabelsForPacket(localDevice.get(), queue);
+     noteDrawWriters(stages, queue);
++    split.Next(Graphics::TmpSplit::CommitDrawAndSubmitDue);
+     if (recipe != nullptr) {
+         if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe) == RecipeOutcome::Recorded) return;
+         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp b/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp
+index b3d8776df..274048dfd 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp
+@@ -185,6 +185,7 @@ public:
+     bool SplitSets() const { return splitSets; }
+     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
++    struct ReusedDrawSets;
+     struct DrawBindings {
+         DrawBindings() = default;
+         DrawBindings(const DrawBindings&) = delete;
+@@ -202,6 +203,9 @@ public:
+         DescriptorCache::SetAllocation fragmentAllocation;
+         DescriptorCache::SetAllocation allocation;
+         std::vector<Snapshot> snapshots;
++        std::shared_ptr<ReusedDrawSets> reuse;
++        std::vector<VkDescriptorBufferInfo> written;
++        std::vector<std::weak_ptr<Buffer>> owners;
+         ~DrawBindings();
+     };
+     struct MovedBuffer {
+@@ -603,6 +607,7 @@ private:
+     };
+     mutable std::vector<MovedWordBuffer> movedWordBuffers;
+     mutable std::size_t movedWordBufferNext = 0;
++    mutable std::shared_ptr<ReusedDrawSets> reusedDrawSets;
+     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
+     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
+     // notes (counted in MarkGpuWrites for the [buffers] line).
+@@ -646,6 +651,21 @@ private:
+     std::uint64_t provedProof = 0;
+     std::uint64_t provedPending = 0;
+     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
++    bool revalidateProofs(std::span<const CompiledShader> shaders, ProofReport* report);
++    // APS5_PER_USE_REFRESH=1: the lookups of the depth textures remade per use (stencil copies,
++    // depth plane copies), repeated on every reuse so their copies are recorded again.
++    struct PerUseRefresh {
++        std::size_t index = 0;
++        std::array<std::uint32_t, 8> words{};
++        GuestTextureResource resource{};
++        VkComponentMapping components{};
++        std::uint64_t guestBytes = 0;
++        bool depthCompare = false;
++        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
++    };
++    std::vector<PerUseRefresh> perUseRefreshes;
++    bool refreshPerUse();
++    bool perUseRefreshed(std::size_t index) const;
+     // The import table's identity when the direct regions' serials were last proved.
+     HostImportsProof importsProof;
+     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/include/Texture.hpp b/core/libs/prx/libSceAgcDriver/Graphics/include/Texture.hpp
+index 0c6aec2ab..22c9011f6 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/include/Texture.hpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/include/Texture.hpp
+@@ -116,7 +116,8 @@ public:
+     enum class PerUseCopy : std::uint8_t { None, RefreshedOnReuse, RemadePerUse };
+     PerUseCopy CopyKind() const { return perUseCopy; }
+     bool RefreshedPerUse() const { return perUseCopy == PerUseCopy::RemadePerUse; }
+-    void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
++    void MarkRefreshedPerUse(std::uint8_t site = 0) { perUseCopy = PerUseCopy::RemadePerUse; tmpPerUseSite = site; }
++    std::uint8_t TmpPerUseSite() const { return tmpPerUseSite; }
+     bool Released() const { return released.load(std::memory_order_acquire); }
+     void MarkReleased() { released.store(true, std::memory_order_release); }
+ 
+@@ -153,6 +154,7 @@ private:
+     std::shared_ptr<StorageTexture> storageSource;
+     std::unique_ptr<CommandBatch> upload;
+     PerUseCopy perUseCopy = PerUseCopy::None;
++    std::uint8_t tmpPerUseSite = 0;
+     std::atomic<bool> released{false};
+     bool copiedOnce = false;
+     bool srgbExpand = false;
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp b/core/libs/prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp
+new file mode 100644
+index 000000000..4306f0bf1
+--- /dev/null
++++ b/core/libs/prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp
+@@ -0,0 +1,106 @@
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++
++// TEST ONLY (APS5_TMP_COMMITTER_SPLIT=1): sub-phase timers of the draw committer's per-draw work,
++// printed as one [tmp-split] line every 10 s. Not for upstream.
++namespace AgcDriver::Graphics::TmpSplit {
++
++enum Slot : std::size_t {
++    LookupKey, LookupFind, LookupRevalidate, LookupMoved, LookupAliases,
++    RecordStoreChecks, RecordBindingsSnapshots, RecordBindingsAllocate, RecordBindingsUpdate, RecordPassAccess, RecordStartPass, RecordCommands, RecordLeavePass,
++    Keep, PipelineMasked, PipelineCached, PipelineFramebuffer, PipelineDepth,
++    CommitLock, CommitLabels, CommitDrawAndSubmitDue,
++    SlotCount
++};
++
++inline constexpr std::array<const char*, SlotCount> Names{
++    "lookup.key", "lookup.find", "lookup.revalidate", "lookup.moved", "lookup.aliases",
++    "record.storeChecks", "record.bindings.snapshots", "record.bindings.allocate", "record.bindings.update", "record.passAccess", "record.startPass", "record.commands", "record.leavePass",
++    "keep", "pipeline.masked", "pipeline.cached", "pipeline.framebuffer", "pipeline.depth",
++    "commit.lock", "commit.labels", "commit.drawAndSubmitDue"};
++
++inline bool On() {
++    static const bool on = std::getenv("APS5_TMP_COMMITTER_SPLIT") != nullptr;
++    return on;
++}
++
++struct Totals {
++    std::array<std::atomic<std::uint64_t>, SlotCount> ns{};
++    std::array<std::atomic<std::uint64_t>, SlotCount> count{};
++    std::atomic<std::uint64_t> snapshots{0}, snapshotHits{0}, uploads{0}, uploadBytes{0}, freshBuffers{0}, movedWordBuffers{0}, writes{0};
++    std::atomic<std::int64_t> last{0};
++};
++
++inline Totals& Get() {
++    static Totals* totals = new Totals();
++    return *totals;
++}
++
++inline void Report() {
++    auto& totals = Get();
++    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
++    auto last = totals.last.load(std::memory_order_relaxed);
++    if (last == 0) {
++        totals.last.compare_exchange_strong(last, now);
++        return;
++    }
++    if (now - last < std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count()) return;
++    if (!totals.last.compare_exchange_strong(last, now)) return;
++    char line[2048];
++    int n = std::snprintf(line, sizeof(line), "[tmp-split] 10 s, ms (calls, us each):");
++    for (std::size_t i = 0; i < SlotCount && n > 0 && static_cast<std::size_t>(n) < sizeof(line); ++i) {
++        const auto ns = totals.ns[i].exchange(0, std::memory_order_relaxed);
++        const auto calls = totals.count[i].exchange(0, std::memory_order_relaxed);
++        if (calls == 0) continue;
++        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %.1f (%llu, %.2f)", Names[i], static_cast<double>(ns) / 1e6, static_cast<unsigned long long>(calls), static_cast<double>(ns) / 1e3 / static_cast<double>(calls));
++    }
++    if (n > 0 && static_cast<std::size_t>(n) < sizeof(line)) {
++        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; bindings: snapshots %llu (unwritten hits %llu, uploads %llu of %llu KiB, fresh buffers %llu), moved word buffers made %llu, descriptor writes %llu",
++            static_cast<unsigned long long>(totals.snapshots.exchange(0)), static_cast<unsigned long long>(totals.snapshotHits.exchange(0)), static_cast<unsigned long long>(totals.uploads.exchange(0)), static_cast<unsigned long long>(totals.uploadBytes.exchange(0) / 1024),
++            static_cast<unsigned long long>(totals.freshBuffers.exchange(0)), static_cast<unsigned long long>(totals.movedWordBuffers.exchange(0)), static_cast<unsigned long long>(totals.writes.exchange(0)));
++    }
++    std::fprintf(stderr, "%s\n", line);
++}
++
++inline void Add(Slot slot, std::uint64_t ns) {
++    auto& totals = Get();
++    totals.ns[slot].fetch_add(ns, std::memory_order_relaxed);
++    totals.count[slot].fetch_add(1, std::memory_order_relaxed);
++}
++
++inline void Count(std::atomic<std::uint64_t> Totals::*field, std::uint64_t value = 1) {
++    if (On()) (Get().*field).fetch_add(value, std::memory_order_relaxed);
++}
++
++// Times from construction (or the last Next) to the next Next or the destructor.
++class Timer {
++public:
++    explicit Timer(Slot first) : slot(first), on(On()) {
++        if (on) start = std::chrono::steady_clock::now();
++    }
++    void Next(Slot next) {
++        if (!on) return;
++        const auto now = std::chrono::steady_clock::now();
++        if (slot != SlotCount) Add(slot, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count()));
++        slot = next;
++        start = now;
++    }
++    void Stop() { Next(SlotCount); }
++    ~Timer() {
++        Stop();
++        if (on) Report();
++    }
++
++private:
++    Slot slot;
++    bool on;
++    std::chrono::steady_clock::time_point start{};
++};
++
++}
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp
+index f20bac7cc..0444008ac 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp
+@@ -469,7 +469,7 @@ public:
+         auto texture = std::make_shared<Texture>(context, useSampleShadow ? sampleShadow->image : image, hostFormat, stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT, components, viewType, 0, sampledImage);
+         if (multisampled) {
+             Require(copySource || samplingActive, "native multisample depth sampling requires its creation-time owner");
+-            texture->MarkRefreshedPerUse();
++            texture->MarkRefreshedPerUse(2);
+         }
+         textures.emplace(key, texture);
+         return texture;
+@@ -1030,7 +1030,7 @@ private:
+         auto& texture = stencilCopy.textures[key];
+         if (texture == nullptr) {
+             texture = std::make_shared<Texture>(context, stencilCopy.image, VK_FORMAT_R8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, components, viewType);
+-            texture->MarkRefreshedPerUse();
++            texture->MarkRefreshedPerUse(3);
+         }
+         return texture;
+     }
+@@ -1246,7 +1246,7 @@ public:
+         auto& texture = textures[key];
+         if (texture == nullptr) {
+             texture = std::make_shared<Texture>(context, image, format, aspect(), components, viewType, baseLayer, owned);
+-            texture->MarkRefreshedPerUse();
++            texture->MarkRefreshedPerUse(4);
+         }
+         return texture;
+     }
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
+index d930aab70..5f5b183f3 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp
+@@ -12,6 +12,7 @@
+ #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+@@ -1663,12 +1664,18 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
+     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+     if (resolved.cacheable) {
++        TmpSplit::Timer split(TmpSplit::LookupKey);
+         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
++        split.Next(TmpSplit::LookupFind);
++        auto found = SharedResourceCache().Find(resolved.contentKey);
++        split.Next(TmpSplit::LookupRevalidate);
++        if (auto cached = std::move(found)) {
+             const bool valid = cached->Revalidate(shaders);
++            split.Next(TmpSplit::LookupMoved);
+             auto* recorder = Recorder::Active();
+             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
+             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
++            split.Next(TmpSplit::LookupAliases);
+             if (moved.has_value()) {
+                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                 resolved.resources = std::move(cached);
+@@ -2137,6 +2144,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+     // within the open batch) and the extent. The previous draw's pass is continued only when this
+     // draw neither reads its attachments (a barrier would be owed, which no pass allows) nor
+     // records anything outside a pass (an indirect draw's argument barrier and scratch copies).
++    TmpSplit::Timer split(TmpSplit::RecordStoreChecks);
+     const auto passKey = DrawRenderPassKey(context, state, record.targetViews);
+     const bool readsTarget = std::any_of(record.targets.begin(), record.targets.end(), [&](const std::shared_ptr<StorageTexture>& target) { return resources.ReadsImage(target.get()); });
+     // A queued DCC key store over memory the draw writes or reads in place (unknown for an
+@@ -2157,7 +2165,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+         recorder->FlushStores();
+         outcome.storesFlushed = true;
+     }
++    split.Stop();
+     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
++    split.Next(TmpSplit::RecordPassAccess);
+     const bool capture = CaptureInputsEnabled();
+     const bool meshIndirect = state.stages.mesh && args != nullptr;
+     const bool addressBased = resources.HoldsLease();
+@@ -2207,8 +2217,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+     }
+     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
+     const bool fenced = state.depth.has_value() || !record.proxies.empty();
++    split.Next(TmpSplit::RecordStartPass);
+     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
++    split.Next(TmpSplit::RecordCommands);
+     const bool continued = start.continued;
+     outcome.passContinued = continued;
+     outcome.passBegun = !continued;
+@@ -2321,10 +2333,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
+             }
+         };
+     }
++    split.Next(TmpSplit::RecordLeavePass);
+     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
+     timer.phase(PhaseRecord);
++    split.Next(TmpSplit::Keep);
+     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
+     timer.phase(PhaseKeep);
++    split.Stop();
+     if (record.waited) {
+         // The wait the dispatch path makes for such work (source 3, "address-based"): the
+         // write-back runs before the next packet, so the CPU never reads copied results or
+@@ -2762,6 +2777,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
+     if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
+     APS5_LOG_CHARS_OUT_DEBUG("Creating Pipeline");
+     // The state is copied only when a mask must change.
++    TmpSplit::Timer pipelineSplit(TmpSplit::PipelineMasked);
+     auto& masked = prepared.masked;
+     masked = maskedState(state, inputs.fragmentOutputs);
+     if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
+@@ -2788,10 +2804,12 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
+         Require(!selectedPipeline->SplitsFaces() && !selectedPipeline->SplitsSecondChannel(), "stencil replay refuses pipeline face or channel splits");
+         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
+     }
++    pipelineSplit.Next(TmpSplit::PipelineCached);
+     auto& pipeline = prepared.pipeline;
+     pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+     // Resident targets' views are stable while their storage image lives, so the framebuffer is
+     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
++    pipelineSplit.Next(TmpSplit::PipelineFramebuffer);
+     auto& owners = prepared.owners;
+     owners.reserve(targets.size());
+     auto& framebufferOwners = prepared.framebufferOwners;
+@@ -2812,7 +2830,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
+             Require(reordered.back().method == step.method, "a reordered attachment's surface disagrees with the planned way of putting its samples in order");
+         }
+     }
++    pipelineSplit.Next(TmpSplit::PipelineDepth);
+     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
++    pipelineSplit.Stop();
+     timer.phase(PhasePipeline);
+     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
+     return true;
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp
+index eead24a67..d6f01d4d4 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/MultisampleTarget.cpp
+@@ -435,7 +435,7 @@ public:
+         auto& texture = firstSampleTextures[key];
+         if (texture == nullptr) {
+             texture = std::make_shared<Texture>(context, firstSampleCopy->Image(), target.format, VK_IMAGE_ASPECT_COLOR_BIT, components);
+-            texture->MarkRefreshedPerUse();
++            texture->MarkRefreshedPerUse(1);
+         }
+         return {shared_from_this(), texture.get()};
+     }
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
+index 84bc84197..3d8627c23 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp
+@@ -9,6 +9,7 @@
+ #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/TmpCommitterSplit.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+ #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+@@ -2559,6 +2560,16 @@ bool TemplateDataRefresh() {
+     return enabled;
+ }
+ 
++bool PerUseRefreshReuse() {
++    static const bool enabled = std::getenv("APS5_PER_USE_REFRESH") != nullptr;
++    return enabled;
++}
++
++std::array<std::atomic<std::uint64_t>, 3>& TmpPerUseRefreshCounts() {
++    static std::array<std::atomic<std::uint64_t>, 3> counts{};
++    return counts;
++}
++
+ bool DataRole(ShaderRecompiler::DescriptorRole role) {
+     return role == ShaderRecompiler::DescriptorRole::ShaderData || role == ShaderRecompiler::DescriptorRole::FlattenedSrt;
+ }
+@@ -2590,16 +2601,38 @@ bool LoopGuardEnabled() {
+ 
+ }
+ 
++std::array<std::atomic<std::uint64_t>, 10>& TmpReuseRefusals() {
++    static std::array<std::atomic<std::uint64_t>, 10> counts{};
++    return counts;
++}
++
++std::array<std::atomic<std::uint64_t>, 5>& TmpPerUseSites() {
++    static std::array<std::atomic<std::uint64_t>, 5> counts{};
++    return counts;
++}
++
+ void ShaderResources::noteReusable() {
+     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
+     captureValidation();
+     reusable = false;
+     directRegions.clear();
+-    if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
+-    if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
+-    if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
++    auto& refusals = TmpReuseRefusals();
++    const auto refuse = [&](std::size_t reason) { refusals[reason].fetch_add(1, std::memory_order_relaxed); };
++    if (guestMemory.HasCopiedWrites()) return refuse(0);
++    if (HoldsLease()) return refuse(1);
++    if (usesBda) return refuse(2);
++    if (!multisampleSources.empty()) return refuse(3);
++    if (bda != nullptr && LoopGuardEnabled()) return refuse(4);
++    const auto unrefreshed = [&](std::size_t index) { return textures[index] != nullptr && textures[index]->RefreshedPerUse() && !perUseRefreshed(index); };
++    std::size_t firstUnrefreshed = 0;
++    while (firstUnrefreshed < textures.size() && !unrefreshed(firstUnrefreshed)) ++firstUnrefreshed;
++    if (const auto perUse = textures.begin() + static_cast<std::ptrdiff_t>(firstUnrefreshed); perUse != textures.end()) {
++        TmpPerUseSites()[std::min<std::size_t>((*perUse)->TmpPerUseSite(), 4)].fetch_add(1, std::memory_order_relaxed);
++        return refuse(5);
++    }
++    if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return refuse(6);
+     const auto regions = guestMemory.DirectRegions();
+-    if (!regions.has_value()) return;
++    if (!regions.has_value()) return refuse(7);
+     for (const auto& [begin, end] : *regions) {
+         // No reconcile here: the upload just took these imports, and the set is about to be recorded
+         // against them.
+@@ -2607,7 +2640,10 @@ void ShaderResources::noteReusable() {
+         // Read-only image mirrors (exe ranges) are as stable as imports; their serials have the top
+         // bit set, so the two spaces never collide.
+         if (serial == 0) serial = ImageMirrorSerial(context, begin, static_cast<std::size_t>(end - begin));
+-        if (serial == 0) return;
++        if (serial == 0) {
++            directRegions.clear();
++            return refuse(8);
++        }
+         directRegions.push_back({begin, end, serial});
+     }
+     for (const auto& cut : guestMemory.CutRegions()) {
+@@ -2618,6 +2654,7 @@ void ShaderResources::noteReusable() {
+         }
+     }
+     reusable = true;
++    refuse(9);
+ }
+ 
+ std::uint64_t ShaderResources::DepthGuardRefusals() {
+@@ -2632,6 +2669,39 @@ bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
+ }
+ 
+ // APS5_PROFILE_DRAW: the per-device descriptor caches' counters, every 10 s.
++namespace {
++bool DrawSetReuse() {
++    static const bool enabled = std::getenv("APS5_DRAW_SET_REUSE") != nullptr;
++    return enabled;
++}
++
++std::size_t DrawSetReuseLimit() {
++    static const std::size_t limit = [] {
++        const char* value = std::getenv("APS5_DRAW_SET_REUSE_MAX");
++        return value != nullptr ? static_cast<std::size_t>(std::strtoull(value, nullptr, 10)) : std::size_t{64};
++    }();
++    return limit;
++}
++
++struct DrawSetCounters {
++    std::atomic<std::uint64_t> reused{0};
++    std::atomic<std::uint64_t> fresh{0};
++    std::atomic<std::uint64_t> skipped{0};
++    std::atomic<std::uint64_t> written{0};
++    std::atomic<std::uint64_t> unchanged{0};
++};
++
++DrawSetCounters& DrawSetCounts() {
++    static DrawSetCounters counters;
++    return counters;
++}
++
++bool NeverOwned(const std::weak_ptr<Buffer>& owner) {
++    const std::weak_ptr<Buffer> none;
++    return !owner.owner_before(none) && !none.owner_before(owner);
++}
++}
++
+ void ShaderResources::reportDescriptorCaches() const {
+     static AgcDriver::Mutex reportMutex;
+     static auto lastReport = std::chrono::steady_clock::now();
+@@ -2643,6 +2713,21 @@ void ShaderResources::reportDescriptorCaches() const {
+     const auto samplerHits = context.samplerCache != nullptr ? context.samplerCache->Hits() : 0;
+     const auto samplerMisses = context.samplerCache != nullptr ? context.samplerCache->Misses() : 0;
+     AgcDriver::ProfilePrint_nid_no_patch("[descriptors] layouts %llu hits / %llu created, sets %llu from %llu pools and %llu dedicated pools, samplers %llu hits / %llu created\n", static_cast<unsigned long long>(descriptors.layoutHits), static_cast<unsigned long long>(descriptors.layoutMisses), static_cast<unsigned long long>(descriptors.sets), static_cast<unsigned long long>(descriptors.pools), static_cast<unsigned long long>(descriptors.dedicatedPools), static_cast<unsigned long long>(samplerHits), static_cast<unsigned long long>(samplerMisses));
++    if (std::getenv("APS5_TMP_COMMITTER_SPLIT") != nullptr) {
++        auto& refusals = TmpReuseRefusals();
++        static constexpr std::array<const char*, 10> names{"copied writes", "lease", "BDA", "multisample sources", "loop guard", "texture refreshed per use", "data over refresh size", "no direct regions", "region without serial", "reusable"};
++        std::string line = "[tmp-reuse] builds (cumulative) by outcome:";
++        for (std::size_t reason = 0; reason < names.size(); ++reason) line += std::string(reason == 0 ? " " : ", ") + names[reason] + " " + std::to_string(refusals[reason].load());
++        AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str());
++        auto& refreshes = TmpPerUseRefreshCounts();
++        AgcDriver::ProfilePrint_nid_no_patch("[tmp-reuse] per-use refresh on reuse (cumulative): same texture %llu, other texture %llu\n", static_cast<unsigned long long>(refreshes[0].load()), static_cast<unsigned long long>(refreshes[1].load()));
++        auto& sites = TmpPerUseSites();
++        AgcDriver::ProfilePrint_nid_no_patch("[tmp-reuse] texture refreshed per use by kind (cumulative): unknown %llu, multisample first-sample copy %llu, multisampled depth sampled %llu, stencil copy %llu, depth plane copy %llu\n", static_cast<unsigned long long>(sites[0].load()), static_cast<unsigned long long>(sites[1].load()), static_cast<unsigned long long>(sites[2].load()), static_cast<unsigned long long>(sites[3].load()), static_cast<unsigned long long>(sites[4].load()));
++    }
++    if (DrawSetReuse()) {
++        auto& counts = DrawSetCounts();
++        AgcDriver::ProfilePrint_nid_no_patch("[draw-sets] reused %llu, fresh %llu, unchanged %llu, buffer descriptors rewritten %llu / skipped %llu\n", static_cast<unsigned long long>(counts.reused.load()), static_cast<unsigned long long>(counts.fresh.load()), static_cast<unsigned long long>(counts.unchanged.load()), static_cast<unsigned long long>(counts.written.load()), static_cast<unsigned long long>(counts.skipped.load()));
++    }
+ }
+ 
+ template<typename TVisitor>
+@@ -3094,7 +3179,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
+         auto& surface = validatedTextures[i];
+         if (!surface.valid) return fail(FastFail::NoRecord);
+         if (surface.depth) {
+-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
++            if (!perUseRefreshed(i) && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
+             continue;
+         }
+         if (textures[i]->Released()) return fail(FastFail::Replaced);
+@@ -3222,7 +3307,7 @@ bool ShaderResources::fastRevalidateEach() {
+         auto& surface = validatedTextures[i];
+         if (!surface.valid) return false;
+         if (surface.depth) {
+-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
++            if (!perUseRefreshed(i) && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
+             continue;
+         }
+         if (textures[i]->Released()) return false;
+@@ -3419,6 +3504,31 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
+ }
+ 
+ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
++    if (!revalidateProofs(shaders, report)) return false;
++    return perUseRefreshes.empty() || refreshPerUse();
++}
++
++bool ShaderResources::perUseRefreshed(std::size_t index) const {
++    return std::any_of(perUseRefreshes.begin(), perUseRefreshes.end(), [&](const PerUseRefresh& refresh) { return refresh.index == index; });
++}
++
++bool ShaderResources::refreshPerUse() {
++    auto& log = lookupLog();
++    const auto logged = log.size();
++    bool same = true;
++    for (const auto& refresh : perUseRefreshes) {
++        const auto texture = cachedTexture(context, refresh.words, refresh.resource, refresh.components, refresh.guestBytes, refresh.depthCompare, refresh.viewType);
++        if (texture != textures[refresh.index]) {
++            same = false;
++            break;
++        }
++    }
++    log.resize(std::min(log.size(), logged));
++    TmpPerUseRefreshCounts()[same ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
++    return same;
++}
++
++bool ShaderResources::revalidateProofs(std::span<const CompiledShader> shaders, ProofReport* report) {
+     if (EpochProofs()) {
+         const auto epoch = GuestMemory::CollectEpoch();
+         const auto proof = GuestMemory::ProofSerial();
+@@ -4856,6 +4966,11 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
+             }
+             if (texture == nullptr) texture = cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType);
+             if (resource.dimension == TextureDimension::k2DMsaa) multisampleSources.push_back(resource.baseAddress);
++            if (PerUseRefreshReuse() && texture->RefreshedPerUse() && !firstSample && words.size() == 8) {
++                PerUseRefresh refresh{textures.size(), {}, resource, components, guestBytes, depthCompare, multisampleViewType};
++                std::copy(words.begin(), words.end(), refresh.words.begin());
++                perUseRefreshes.push_back(refresh);
++            }
+             bool baseLevel = false;
+             if (element < binding.imageUnnormalized.size() && binding.imageUnnormalized[element]) {
+                 const auto range = texture->SampledViewRange(firstLayer);
+@@ -5473,8 +5588,38 @@ bool ShaderResources::LayoutUpdateAfterBind() const {
+     return updateAfterBind;
+ }
+ 
++struct ShaderResources::ReusedDrawSets {
++    struct Sets {
++        DescriptorCache::SetAllocation allocation;
++        DescriptorCache::SetAllocation fragmentAllocation;
++        std::vector<VkDescriptorBufferInfo> written;
++        std::vector<std::weak_ptr<Buffer>> owners;
++    };
++    DescriptorCache* cache = nullptr;
++    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
++    VkDescriptorSetLayout fragmentLayout = VK_NULL_HANDLE;
++    AgcDriver::Mutex mutex;
++    std::vector<Sets> parked;
++    ~ReusedDrawSets() {
++        for (const auto& sets : parked) {
++            if (sets.allocation.set != VK_NULL_HANDLE) cache->Recycle(layout, sets.allocation);
++            if (sets.fragmentAllocation.set != VK_NULL_HANDLE) cache->Recycle(fragmentLayout, sets.fragmentAllocation);
++        }
++    }
++};
++
+ ShaderResources::DrawBindings::~DrawBindings() {
+     if (cache == nullptr) return;
++    if (reuse != nullptr) {
++        try {
++            std::lock_guard lock(reuse->mutex);
++            if (reuse->parked.size() < DrawSetReuseLimit()) {
++                reuse->parked.push_back({allocation, fragmentAllocation, std::move(written), std::move(owners)});
++                return;
++            }
++        } catch (...) {
++        }
++    }
+     const auto release = [&](VkDescriptorSetLayout setLayout, const DescriptorCache::SetAllocation& set) {
+         if (set.set == VK_NULL_HANDLE) return;
+         if (setLayout != VK_NULL_HANDLE) cache->Recycle(setLayout, set);
+@@ -5608,6 +5753,7 @@ std::size_t ShaderResources::DrawUploadLimit() {
+ 
+ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly) const {
+     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
++    TmpSplit::Timer split(movedOnly ? TmpSplit::SlotCount : TmpSplit::RecordBindingsSnapshots);
+     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* readsSlot = nullptr;
+     auto& reads = ShaderRecompiler::ThreadOwned(readsSlot);
+     guestMemory.InPlaceReads(reads);
+@@ -5635,6 +5781,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+                 buffer = held->buffer;
+             } else {
+                 buffer = std::make_shared<Buffer>(context, override->size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
++                if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::movedWordBuffers);
+                 std::memcpy(buffer->Bytes().data(), override->words.data(), override->size);
+                 for (const auto& patch : dataPatches) {
+                     if (patch.allocation == index && patch.byte < override->size) buffer->Bytes()[patch.byte] = static_cast<std::byte>(patch.adjustment);
+@@ -5667,6 +5814,8 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+         }
+         VkDeviceSize offset = 0;
+         auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp, &offset);
++        if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::snapshots);
++        if (!movedOnly && buffer != nullptr) TmpSplit::Count(&TmpSplit::Totals::snapshotHits);
+         static const bool verifySnapshots = std::getenv("APS5_VERIFY_DRAW_SNAPSHOTS") != nullptr;
+         if (verifySnapshots && buffer != nullptr) {
+             static std::atomic<std::uint64_t> checked{0}, differing{0};
+@@ -5681,6 +5830,8 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+             const bool uploaded = bytes != 0 && bytes <= uploadLimit;
+             if (uploaded) {
+                 auto slice = recorder.DrawUpload(bytes);
++                if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::uploads);
++                if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::uploadBytes, bytes);
+                 std::memcpy(slice.bytes, reinterpret_cast<const void*>(begin), bytes);
+                 buffer = std::move(slice.buffer);
+                 offset = slice.offset;
+@@ -5689,6 +5840,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+                 buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation, &offset);
+                 if (buffer == nullptr) {
+                     buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
++                    if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::freshBuffers);
+                     std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
+                     recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+                 }
+@@ -5702,6 +5854,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
+     }
+     if (selected.empty()) return {};
++    if (!movedOnly) split.Next(TmpSplit::RecordBindingsAllocate);
+     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
+     std::array<bool, 2> described{};
+     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
+@@ -5721,16 +5874,39 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+     const auto sizesOf = [&](std::size_t set) { return std::span<const VkDescriptorPoolSize>(counts[set]); };
+     const auto variableOf = [&](std::size_t set) { return tableBindings[set] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(std::max(1u, static_cast<std::uint32_t>(bindings[tableBindings[set]].imageAllocations.size()))) : std::nullopt; };
+     result->cache = context.descriptorCache;
+-    if (described[0] || splitSets) {
++    bool reused = false;
++    if (DrawSetReuse()) {
++        if (reusedDrawSets == nullptr) {
++            reusedDrawSets = std::make_shared<ReusedDrawSets>();
++            reusedDrawSets->cache = context.descriptorCache;
++            reusedDrawSets->layout = _layout;
++            reusedDrawSets->fragmentLayout = fragment.layout;
++        }
++        result->reuse = reusedDrawSets;
++        std::lock_guard lock(reusedDrawSets->mutex);
++        if (!reusedDrawSets->parked.empty()) {
++            auto& sets = reusedDrawSets->parked.back();
++            result->allocation = sets.allocation;
++            result->fragmentAllocation = sets.fragmentAllocation;
++            result->written = std::move(sets.written);
++            result->owners = std::move(sets.owners);
++            reusedDrawSets->parked.pop_back();
++            if (result->allocation.set != VK_NULL_HANDLE) result->layout = _layout;
++            if (result->fragmentAllocation.set != VK_NULL_HANDLE) result->fragmentLayout = fragment.layout;
++            reused = true;
++        }
++    }
++    if (!reused && (described[0] || splitSets)) {
+         result->allocation = result->cache->AllocateRewritten(_layout, sizesOf(0), updateAfterBind, variableOf(0));
+         result->layout = _layout;
+         Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
+     }
+-    if (described[1] || splitSets) {
++    if (!reused && (described[1] || splitSets)) {
+         result->fragmentAllocation = result->cache->AllocateRewritten(fragment.layout, sizesOf(1), updateAfterBind, variableOf(1));
+         result->fragmentLayout = fragment.layout;
+         Require(result->fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
+     }
++    if (!movedOnly) split.Next(TmpSplit::RecordBindingsUpdate);
+     thread_local std::vector<VkDescriptorBufferInfo>* buffersSlot = nullptr;
+     auto& buffers = ShaderRecompiler::ThreadOwned(buffersSlot);
+     buffers = descriptorBuffers;
+@@ -5741,6 +5917,9 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+     auto& snapshotIndices = ShaderRecompiler::ThreadOwned(indicesSlot);
+     snapshotIndices.assign(allocations.size(), selected.size());
+     for (std::size_t index = 0; index < selected.size(); ++index) snapshotIndices[selected[index]] = index;
++    thread_local std::vector<std::pair<std::size_t, std::size_t>>* ownedSlot = nullptr;
++    auto& owned = ShaderRecompiler::ThreadOwned(ownedSlot);
++    owned.clear();
+     auto nextWrite = writes.begin();
+     for (const auto& binding : bindings) {
+         const auto original = setOf(binding) == 0 ? _set : fragment.set;
+@@ -5755,11 +5934,61 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
+                 if (snapshotIndex == selected.size()) continue;
+                 const auto& snapshot = result->snapshots[snapshotIndex];
+                 buffers[offset + element] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes};
++                if (result->reuse != nullptr) owned.emplace_back(offset + element, snapshotIndex);
+             }
+         }
+     }
+     Require(nextWrite == writes.end(), "draw snapshot writes disagree with their descriptor bindings");
+-    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
++    if (reused && (result->written.size() != buffers.size() || result->owners.size() != buffers.size())) reused = false;
++    if (!reused) {
++        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
++        if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::writes, writes.size());
++    } else {
++        thread_local std::vector<VkWriteDescriptorSet>* changedSlot = nullptr;
++        auto& changed = ShaderRecompiler::ThreadOwned(changedSlot);
++        changed.clear();
++        std::uint64_t skipped = 0;
++        const auto same = [&](std::size_t element) {
++            const auto& before = result->written[element];
++            const auto& after = buffers[element];
++            return before.buffer == after.buffer && before.offset == after.offset && before.range == after.range && (NeverOwned(result->owners[element]) || !result->owners[element].expired());
++        };
++        for (const auto& write : writes) {
++            if (write.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || write.pBufferInfo < buffers.data() || write.pBufferInfo >= buffers.data() + buffers.size()) {
++                skipped += write.descriptorCount;
++                continue;
++            }
++            const auto offset = static_cast<std::size_t>(write.pBufferInfo - buffers.data());
++            for (std::uint32_t first = 0; first < write.descriptorCount;) {
++                if (same(offset + first)) {
++                    ++first;
++                    ++skipped;
++                    continue;
++                }
++                auto last = first;
++                while (last < write.descriptorCount && !same(offset + last)) ++last;
++                auto run = write;
++                run.dstArrayElement = write.dstArrayElement + first;
++                run.descriptorCount = last - first;
++                run.pBufferInfo = write.pBufferInfo + first;
++                changed.push_back(run);
++                first = last;
++            }
++        }
++        auto& counts = DrawSetCounts();
++        counts.reused.fetch_add(1, std::memory_order_relaxed);
++        counts.skipped.fetch_add(skipped, std::memory_order_relaxed);
++        if (changed.empty()) counts.unchanged.fetch_add(1, std::memory_order_relaxed);
++        else context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(changed.size()), changed.data(), 0, nullptr);
++        if (!movedOnly) TmpSplit::Count(&TmpSplit::Totals::writes, changed.size());
++        for (const auto& write : changed) counts.written.fetch_add(write.descriptorCount, std::memory_order_relaxed);
++    }
++    if (result->reuse != nullptr) {
++        if (!reused) DrawSetCounts().fresh.fetch_add(1, std::memory_order_relaxed);
++        result->written.assign(buffers.begin(), buffers.end());
++        result->owners.assign(buffers.size(), {});
++        for (const auto& [element, snapshotIndex] : owned) result->owners[element] = result->snapshots[snapshotIndex].buffer;
++    }
+     recorder.Keep(result);
+     for (const auto& snapshot : result->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+     return result;
+diff --git a/core/libs/prx/libSceAgcDriver/tests/Recorder.cpp b/core/libs/prx/libSceAgcDriver/tests/Recorder.cpp
+index 8a6c1fe19..61ee309bd 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/Recorder.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/Recorder.cpp
+@@ -3941,6 +3941,90 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
+     recorder.Activate();
+ }
+ 
++void drawSetReuseTests(const Device& device, Recorder& recorder) {
++    auto context = device.GetContext();
++    DescriptorUpdates updates(context);
++    {
++        DescriptorCache cache(context);
++        context.descriptorCache = &cache;
++        Recorder snapshots(context);
++        snapshots.Activate();
++        ShaderRecompiler::RecompileResult program;
++        ShaderRecompiler::DescriptorBinding data{};
++        data.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
++        data.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
++        data.binding = 2;
++        data.count = 1;
++        data.guestDescriptor = {1, 2, 3, 4};
++        program.bindings.push_back(data);
++        data.binding = 7;
++        program.bindings.push_back(data);
++        ShaderRecompiler::DescriptorBinding sampler{};
++        sampler.kind = ShaderRecompiler::DescriptorKind::Sampler;
++        sampler.role = ShaderRecompiler::DescriptorRole::GuestSamplers;
++        sampler.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
++        sampler.count = 2;
++        sampler.guestDescriptor.resize(8);
++        sampler.samplerDepthCompare = {false, false};
++        program.bindings.push_back(sampler);
++        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
++        ShaderResources resources(context, shader);
++        const auto original = updates.calls.front();
++        const std::array<std::uint32_t, 4> firstWords{5, 6, 7, 8};
++        const std::array<std::uint32_t, 4> secondWords{9, 10, 11, 12};
++        const auto prepare = [&](std::size_t allocation, std::span<const std::uint32_t> words) {
++            const ShaderResources::MovedBuffer moved{allocation, 0, 16, words};
++            auto draw = resources.PrepareDrawBindings(snapshots, std::span(&moved, 1));
++            Require(draw != nullptr && draw->snapshots.size() == 1, "moved shader data did not create a draw snapshot");
++            return draw;
++        };
++        const auto complete = [&] {
++            snapshots.Sync();
++            snapshots.FlushDeferredReleases();
++        };
++        auto draw = prepare(0, firstWords);
++        const auto set = draw->allocation.set;
++        Require(updates.calls.back().buffers.size() == 2 && updates.calls.back().images.size() == 2, "a fresh draw set was not written in full");
++        draw.reset();
++        complete();
++
++        draw = prepare(0, secondWords);
++        Require(draw->allocation.set == set, "a completed draw's descriptor set was not reused by the next draw of the same build");
++        const auto& changed = updates.calls.back();
++        Require(changed.buffers.size() == 1 && changed.images.empty(), "a reused draw set rewrote descriptors that did not change");
++        const auto rewritten = changed.buffers.at({2u, 0u});
++        Require(rewritten.buffer == draw->snapshots.front().buffer->Handle() && rewritten.offset == draw->snapshots.front().offset && rewritten.range == draw->snapshots.front().bytes, "a reused draw set kept the previous draw's buffer");
++        Require(changed.written.at({set, 2u}) == 1u, "the changed buffer was written to another set");
++        draw.reset();
++        complete();
++
++        const auto calls = updates.calls.size();
++        draw = prepare(0, secondWords);
++        Require(draw->allocation.set == set && updates.calls.size() == calls, "an unchanged reused draw set was written again");
++        draw.reset();
++        complete();
++
++        draw = prepare(1, firstWords);
++        Require(draw->allocation.set == set, "a draw moving another buffer did not reuse the completed set");
++        const auto& moved = updates.calls.back();
++        Require(moved.buffers.size() == 2 && moved.images.empty(), "moving another buffer did not rewrite exactly the two changed descriptors");
++        const auto restored = moved.buffers.at({2u, 0u});
++        const auto before = original.buffers.at({2u, 0u});
++        Require(restored.buffer == before.buffer && restored.offset == before.offset && restored.range == before.range, "a reused draw set kept a moved buffer the draw no longer moves");
++        Require(moved.buffers.at({7u, 0u}).buffer == draw->snapshots.front().buffer->Handle(), "a reused draw set missed the newly moved buffer");
++        draw.reset();
++        complete();
++
++        auto firstInFlight = prepare(0, firstWords);
++        auto secondInFlight = prepare(0, secondWords);
++        Require(firstInFlight->allocation.set != secondInFlight->allocation.set, "in-flight draws share a reused descriptor set");
++        firstInFlight.reset();
++        secondInFlight.reset();
++        complete();
++    }
++    recorder.Activate();
++}
++
+ void drawSnapshotTableSetTests(const Device& device, Recorder& recorder) {
+     namespace Abi = ShaderRecompiler::ImageTableAbi;
+     using ShaderRecompiler::DescriptorKind;
+@@ -11215,6 +11299,11 @@ int main(int argc, char** argv) {
+             std::cout << "Draw descriptor writes and snapshot overrides passed\n";
+             return 0;
+         }
++        if (argc == 2 && std::string_view(argv[1]) == "--draw-set-reuse-only") {
++            drawSetReuseTests(device, recorder);
++            std::cout << "Draw descriptor set reuse passed\n";
++            return 0;
++        }
+         if (argc == 2 && std::string_view(argv[1]) == "--space-pending-writes-only") {
+             overlappedRangeTests(recorder);
+             spaceWriteSyncTests(device, recorder);
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp
+index f77432e09..66d18b5b7 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/DepthPlaneSampling.cpp
+@@ -285,6 +285,39 @@ void ArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std
+     }
+ }
+ 
++// The same dispatch twice over a 3-slice D32 array, the depth surface redrawn between them: the
++// second reads the new depth, whether its build is reused (APS5_PER_USE_REFRESH) or made again.
++void RedrawnArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
++    auto* base = block.At(ArrayOffset);
++    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.25f);
++    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
++    FillSlice(base + 2u * SliceBytes, SliceBytes, Bits(0.75f), 4u);
++    const Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
++    std::vector<std::uint32_t> userData(16, 0u);
++    const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
++    const auto texture = TextureDescriptor(base, shape);
++    std::copy(out.begin(), out.end(), userData.begin());
++    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
++    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(LoadArray.data()), std::as_bytes(std::span(LoadArray))}}};
++    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
++    ShaderRecompiler::RecompileRequest request{
++        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(LoadArray.data()), LoadArray, 0, {}},
++        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
++        device.Target(),
++        {0, 0, 0, 128}
++    };
++    request.useCache = false;
++    const auto result = ShaderRecompiler::Recompile(request);
++    const std::array<float, 3> depths{0.25f, 0.625f, 0.125f};
++    for (std::size_t round = 0; round < depths.size(); ++round) {
++        if (round != 0) DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, depths[round]);
++        std::fill(output.begin(), output.end(), 0xdeadbeefu);
++        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadArray.data()));
++        device.WaitIdle();
++        Expect(output, Bits(depths[round]), "D32 array slice 0 after redraw " + std::to_string(round));
++    }
++}
++
+ // A cube over six square D32 slices: face 0 from the live surface, faces 1-5 from guest memory.
+ void CubeCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+     auto* base = block.At(CubeOffset);
+@@ -443,6 +476,7 @@ int main(int argc, char** argv) {
+         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
+         ArrayCase(*device, block, output);
+         CubeCase(*device, block, output);
++        RedrawnArrayCase(*device, block, output);
+         IntegerCase(*device, block, output);
+         DepthBitsArrayCase(*device, block, output);
+         DepthBitsBaseSliceCase(*device, block, output);
+diff --git a/docs/dev/ENVIRONMENT.md b/docs/dev/ENVIRONMENT.md
+index 93ed16065..4563a7732 100644
+--- a/docs/dev/ENVIRONMENT.md
++++ b/docs/dev/ENVIRONMENT.md
+@@ -125,6 +125,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_DRAW_INPUTS_IN_PLACE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | binds draw vertex and index ranges in place from host imports also with NVIDIA's Windows driver, which copies them by default |
+ | `APS5_DRAW_KEY_ALL_USER_WORDS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRegisterKey.cpp` |  | includes all 32 user words in a draw's register key instead of the used count |
+ | `APS5_DRAW_PIPELINE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | runs the second half of a pipelined draw on a draw finisher thread and keeps proofs for the collect epoch |
++| `APS5_DRAW_SET_REUSE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | gives a draw with snapshotted bindings a descriptor set an earlier draw of the same build used after its batch completed, and rewrites only the buffer descriptors that changed; prints a `[draw-sets]` line with `APS5_PROFILE_DRAW` |
++| `APS5_DRAW_SET_REUSE_MAX` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 64 | completed descriptor sets each build keeps for reuse with `APS5_DRAW_SET_REUSE`; further sets go back to the descriptor cache |
+ | `APS5_DRAW_SNAPSHOT_MAX_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 64 | upper bound in MiB on the snapshot bytes a draw's bindings may take |
+ | `APS5_DRAW_TRANSITIONS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | keeps the per-draw upload and download barriers and layout transitions instead of the lean recorded path |
+ | `APS5_DRAW_UPLOAD_MAX` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 4096 | largest draw snapshot in bytes copied into the per-recorder upload chunk; 0 turns the chunk off |
+@@ -344,6 +346,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_NO_WRITTEN_SHADOW` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | binds written staging elements in place instead of through the written shadow |
+ | `APS5_NV_DIAGNOSTICS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | creates the device with VK_NV_device_diagnostics_config and VK_NV_device_diagnostic_checkpoints where supported, for Nsight Aftermath crash dumps |
+ | `APS5_PACKET_EPOCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitStatistics.cpp` |  | makes queue workers bump the collect epoch before every packet |
++| `APS5_PER_USE_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | lets a build that samples a depth plane or stencil copy remade per use be reused: each reuse repeats that texture's lookup, which records its copy again, and the build is made anew when the lookup returns another texture; prints a `[tmp-reuse]` refresh line with `APS5_PROFILE_DRAW` and `APS5_TMP_COMMITTER_SPLIT` |
+ | `APS5_PIPELINED_DRAWS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp` | 8 | depth of the queue-0 draw pipeline: 0 records draws inline, 1 selects the default depth of 8, and any other value is the depth capped at 256 |
+ | `APS5_PIPELINE_DISPATCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | records an eligible dispatch as an item in the queue-0 pipeline instead of running it inline |
+ | `APS5_PIPELINE_DMA` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | records a queue-0 DMA data packet in the draw pipeline instead of executing it inline |
