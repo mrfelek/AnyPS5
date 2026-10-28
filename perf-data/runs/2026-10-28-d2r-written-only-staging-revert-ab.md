@@ -38,4 +38,28 @@ The "hooksync" column is hook syncs per 10 s / time spent in them.
 
 Shared-memory peak: 8,840 / 8,932 / 8,819 / 9,192 MiB (a1 b1 a2 b2).
 
+## Same A/B on the AMD mini PC (Radeon 780M)
+
+- **Date / machine:** 2026-10-28, AMD mini PC (Ryzen 9 PRO 8945HS, Radeon 780M integrated GPU, RADV, Mesa 26.0.8). See [machines.md](../machines.md).
+- **Builds and scenes:** the same A (`cc672fdfc6`) and B (A + revert of `a293f7901b`), the same menu window and town window, same settings (headless, audio muted, shader disk cache off). Order A1 B1 A2 B2. No validation errors, no device loss.
+- **One arm short:** a1 was stopped by the memory guard while the town was loading (before any in-game frame), so A has two menu windows and one town window. Every complete window stayed at 9.2-9.6 GiB.
+
+**Result: no difference, menu or town.** Staging is about 0.9 GiB each way per 10 s in both arms (the desktop moves about 21 GB with the PR). The PR targets discrete GPUs; the 780M is integrated, so the changed path most likely never runs there. This machine cannot show the desktop trade-off, and the town trace stays on the desktop.
+
+Medians over the 10 s lines in each window:
+
+| | A menu (a1 / a2) | B menu (b1 / b2) | A town (a2) | B town (b1 / b2) |
+|---|---|---|---|---|
+| presents /10 s | 57 / 57 | 57 / 57 | 58 | 57 / 57 |
+| frame p50 ms | 176.4 / 177.3 | 177.1 / 176.9 | 173.2 | 175.8 / 175.8 |
+| GPU busy per present ms | 172.4 / 172.9 | 172.8 / 172.5 | 143.0 | 143.1 / 142.9 |
+| GPU time ms /10 s | 519 / 518.5 | 515.5 / 516 | 1267 | 1256 / 1241 |
+| staging in / back GiB /10 s | 0.9 / 0.9 | 0.9 / 0.9 | 0.9 | 0.9 / 0.9 |
+| committer us per commit | 44.6 / 44.8 | 45.3 / 46.3 | 46.4 | 47.4 / 47.0 |
+| CPU total % | 142 | 142 / 144 | 218 | 218 / 219 |
+| RSS max MiB | 9455 / 9192 | 9272 / 9513 | 9630 | 9380 / 9387 |
+| VRAM / GTT MiB | 1979 / 1906, 12646 / 12391 | 1984 / 1977, 12339 / 12303 | 1936, 12909 | 1938 / 1877, 13353 / 13469 |
+
+On this machine the frame is held by draws (about 144 ms per present in the menu, 101 ms in town) and by clears (about 6 ms per present), not by staging (about 2 ms per present in both arms).
+
 AI-assisted. Tested by me on my own machine.
