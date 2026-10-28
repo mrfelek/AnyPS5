@@ -909,6 +909,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::size_t completedSubdraws = 0;
     std::int32_t instanceInputSgpr = -1;
+    std::int32_t vertexInputSgpr = -1;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
@@ -950,25 +951,36 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
             indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
-            if (indirectCpu == Graphics::IndirectDrawPath::NotFolded && program.binary.stage == Stage::Vertex && program.firstUserSgpr == 8u && !graphics.rectList && !graphics.stages.mesh && !graphics.stages.tessellation) {
+            static const bool inputRoutes = std::getenv("APS5_NO_INDIRECT_INPUT_ROUTES") == nullptr;
+            if (inputRoutes && indirectCpu == Graphics::IndirectDrawPath::NotFolded && program.binary.stage == Stage::Vertex && program.firstUserSgpr == 8u && !graphics.rectList && !graphics.stages.mesh && !graphics.stages.tessellation) {
                 const auto& indirect = *drawParameters.indirect;
-                const auto words = UserDataWords(programs, roles, indirect.startInstanceLocation);
-                if (words.size() == 1u && words.front().first == 0u && words.front().second < 64u) {
+                const auto resourceMask = recompiled[0] ? stageCaptures[0].userDataUse.asBase | stageCaptures[0].userDataUse.asValue : matched[0] != nullptr ? matched[0]->resourceUserDataMask : ~std::uint64_t{0};
+                const auto inputSgpr = [&](std::uint32_t location) {
+                    if (location == 0x280u) return -1;
+                    const auto words = UserDataWords(programs, roles, location);
+                    if (words.size() != 1u || words.front().first != 0u || words.front().second >= 64u) return -1;
                     const auto word = words.front().second;
-                    const auto resourceMask = recompiled[0] ? stageCaptures[0].userDataUse.asBase | stageCaptures[0].userDataUse.asValue : matched[0] != nullptr ? matched[0]->resourceUserDataMask : ~std::uint64_t{0};
                     bool decoded = false;
                     if (vertexInfos[0] && vertexInfos[0]->resourcesNum != 0u) {
                         for (const auto reg : {vertexInfos[0]->fetchAttribReg, vertexInfos[0]->fetchBufferReg}) decoded |= word == reg || word == reg + 1u;
                     }
-                    if (!decoded && (resourceMask & (std::uint64_t{1} << word)) == 0u) {
-                        const auto sgpr = static_cast<std::int32_t>(program.firstUserSgpr + word);
-                        const auto candidate = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect, sgpr);
-                        if (!candidate) {
-                            indirectCpu.reset();
-                            instanceInputSgpr = sgpr;
-                        }
+                    if (decoded || (resourceMask & (std::uint64_t{1} << word)) != 0u) return -1;
+                    return static_cast<std::int32_t>(program.firstUserSgpr + word);
+                };
+                const auto instance = inputSgpr(indirect.startInstanceLocation);
+                const auto vertex = inputSgpr(indirect.baseVertexLocation);
+                if (traceIndirect) std::fprintf(stderr, "[draw] indirect draw-parameter routes: instance s%d vertex s%d (user words read by resources 0x%llx, vertex resources %u)\n", instance, vertex, static_cast<unsigned long long>(resourceMask), vertexInfos[0] ? vertexInfos[0]->resourcesNum : 0u);
+                const std::array<std::pair<std::int32_t, std::int32_t>, 3> routes{{{instance, vertex}, {instance, -1}, {-1, vertex}}};
+                for (const auto& [instanceRoute, vertexRoute] : routes) {
+                    if (instanceRoute < 0 && vertexRoute < 0) continue;
+                    if (!ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect, instanceRoute, vertexRoute)) {
+                        indirectCpu.reset();
+                        instanceInputSgpr = instanceRoute;
+                        vertexInputSgpr = vertexRoute;
+                        break;
                     }
                 }
+                if (indirectCpu) static_cast<void>(ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, false));
             }
             if (EmptyIndirectSkip()) CpuIndirectPrograms()[programs.front().binary.codeAddress] = indirectCpu.has_value();
         } else if (i == 0) {
@@ -1105,12 +1117,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         snapshots.reserve(memory.size());
         for (const auto& region : memory) snapshots.push_back({region.guestAddress, region.bytes});
     };
-    if (instanceInputSgpr >= 0) {
+    if (instanceInputSgpr >= 0 || vertexInputSgpr >= 0) {
         auto dynamicCaptures = stageCaptures;
         auto dynamicRecompiled = recompiled;
         try {
-            const auto compiled = materializeDrawStage(0, pushOffsets[0], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, dynamicCaptures, dynamicRecompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, instanceInputSgpr);
-            require(compiled->pushConstants.size() <= programResults[0]->pushConstants.size() && compiled->parameterExports == programResults[0]->parameterExports, "dynamic instance input changed the linked stage interface");
+            const auto compiled = materializeDrawStage(0, pushOffsets[0], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, dynamicCaptures, dynamicRecompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, instanceInputSgpr, vertexInputSgpr);
+            require(compiled->pushConstants.size() <= programResults[0]->pushConstants.size() && compiled->parameterExports == programResults[0]->parameterExports, "dynamic draw-parameter input changed the linked stage interface");
             compiledStages.push_back(compiled);
             programResults[0] = compiled.get();
             stages[0].program = compiled.get();

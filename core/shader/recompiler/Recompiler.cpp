@@ -262,6 +262,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     if (translateOptions.instanceInputSgpr != -1 && (request.shader.stage != ShaderStage::Vertex || request.graphics->mesh || request.graphics->tessellation || !supports(spv::CapabilityDrawParameters))) {
         throw std::runtime_error("dynamic instance input requires a vertex draw with shader draw parameters");
     }
+    translateOptions.vertexInputSgpr = request.graphics ? request.graphics->vertexInputSgpr : -1;
+    if (translateOptions.vertexInputSgpr != -1 && (request.shader.stage != ShaderStage::Vertex || request.graphics->mesh || request.graphics->tessellation || !supports(spv::CapabilityDrawParameters))) {
+        throw std::runtime_error("dynamic vertex input requires a vertex draw with shader draw parameters");
+    }
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);

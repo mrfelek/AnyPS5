@@ -252,8 +252,10 @@ void IndirectDrawWaitsForItsQueuedRecordWrite() {
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
+    _putenv_s("APS5_NO_INDIRECT_INPUT_ROUTES", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
+    setenv("APS5_NO_INDIRECT_INPUT_ROUTES", "1", 1);
 #endif
     try {
         {

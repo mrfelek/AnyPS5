@@ -614,7 +614,7 @@ int main() {
         for (const bool barycentric : {false, true}) {
             dynamic.target.fragmentBarycentricBuiltins = barycentric;
             const auto ordinary = serializer.Serialize(dynamic);
-            Require(DecodeBase64(ordinary)[4] == 48u);
+            Require(DecodeBase64(ordinary)[4] == 49u);
             const auto replay48 = serializer.Deserialize(ordinary);
             Require(replay48.request.graphics->instanceInputSgpr == -1 && replay48.request.target.fragmentBarycentricBuiltins == barycentric);
             Require(serializer.Serialize(replay48.request) == ordinary);
@@ -628,7 +628,7 @@ int main() {
                 const auto encoded = serializer.Serialize(dynamic);
                 const auto bytes = DecodeBase64(encoded);
                 const auto replay49 = serializer.Deserialize(encoded);
-                Require(bytes[4] == 49u && replay49.request.graphics->instanceInputSgpr == sgpr);
+                Require(bytes[4] == 50u && replay49.request.graphics->instanceInputSgpr == sgpr);
                 Require(replay49.request.target.fragmentBarycentricBuiltins == barycentric);
                 Require(serializer.Serialize(replay49.request) == encoded);
                 for (std::size_t missing = 1; missing <= sizeof(std::int32_t); ++missing) {
@@ -645,9 +645,23 @@ int main() {
             legacy47.insert(legacy47.end(), {8u, 0u, 0u, 0u});
             expectRejected(legacy47, "RequestSerializer: unexpected trailing data");
         }
+        for (const auto& [instance, vertex] : {std::pair{-1, 10}, std::pair{11, 10}, std::pair{10, 39}}) {
+            dynamic.graphics->instanceInputSgpr = instance;
+            dynamic.graphics->vertexInputSgpr = vertex;
+            const auto encoded = serializer.Serialize(dynamic);
+            const auto bytes = DecodeBase64(encoded);
+            const auto replay50 = serializer.Deserialize(encoded);
+            Require(bytes[4] == 51u && replay50.request.graphics->instanceInputSgpr == instance && replay50.request.graphics->vertexInputSgpr == vertex);
+            Require(serializer.Serialize(replay50.request) == encoded);
+            auto truncated = bytes;
+            truncated.resize(truncated.size() - sizeof(std::int32_t));
+            expectRejected(truncated, "RequestSerializer: truncated data");
+        }
+        dynamic.graphics->instanceInputSgpr = -1;
+        dynamic.graphics->vertexInputSgpr = -1;
         ShaderRecompiler::RecompileRequest noGraphics{};
         auto missingContext = DecodeBase64(serializer.Serialize(noGraphics));
-        missingContext[4] = 49u;
+        missingContext[4] = 50u;
         missingContext.insert(missingContext.end(), {8u, 0u, 0u, 0u});
         expectRejected(missingContext, "RequestSerializer: dynamic instance input requires a graphics context");
     }
@@ -674,7 +688,7 @@ int main() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 50u;
+        future[4] = 52u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));

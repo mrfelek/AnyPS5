@@ -153,7 +153,7 @@ struct Module {
         }
         const auto signature = Signature(type);
         if (vertex && storage == spv::StorageClassInput) {
-            Require((value == spv::BuiltInVertexIndex || value == spv::BuiltInInstanceIndex || value == spv::BuiltInBaseInstance) && signature == "i32", "unsupported vertex built-in input");
+            Require((value == spv::BuiltInVertexIndex || value == spv::BuiltInInstanceIndex || value == spv::BuiltInBaseInstance || value == spv::BuiltInBaseVertex) && signature == "i32", "unsupported vertex built-in input");
         } else if (vertex && storage == spv::StorageClassOutput) {
             if (value == spv::BuiltInLayer && layerOutput && (signature == "u32" || signature == "i32")) return;
             if (value == spv::BuiltInPointSize && pointSizeOutput && signature == "f32" && !pointSize) {

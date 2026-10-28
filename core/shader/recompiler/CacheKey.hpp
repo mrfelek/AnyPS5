@@ -59,7 +59,10 @@ public:
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
-        if (request.graphics && request.graphics->instanceInputSgpr != -1) append(key, request.graphics->instanceInputSgpr);
+        if (request.graphics && (request.graphics->instanceInputSgpr != -1 || request.graphics->vertexInputSgpr != -1)) {
+            append(key, request.graphics->instanceInputSgpr);
+            if (request.graphics->vertexInputSgpr != -1) append(key, request.graphics->vertexInputSgpr);
+        }
         std::uint64_t hash = 0xcbf29ce484222325ull;
         for (const auto value : key) {
             hash ^= value;
@@ -94,7 +97,10 @@ private:
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
-        if (request.graphics && request.graphics->instanceInputSgpr != -1) append(key, request.graphics->instanceInputSgpr);
+        if (request.graphics && (request.graphics->instanceInputSgpr != -1 || request.graphics->vertexInputSgpr != -1)) {
+            append(key, request.graphics->instanceInputSgpr);
+            if (request.graphics->vertexInputSgpr != -1) append(key, request.graphics->vertexInputSgpr);
+        }
         append(key, request.target);
         append(key, DebugProbeActive());
         append(key, RayTracingStrict());

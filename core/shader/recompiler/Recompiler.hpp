@@ -449,6 +449,7 @@ struct GraphicsCompileContext {
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
     std::int32_t instanceInputSgpr = -1;
+    std::int32_t vertexInputSgpr = -1;
 };
 
 struct RecompileRequest {

@@ -43,6 +43,7 @@ struct TranslateOptions {
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
     std::int32_t instanceInputSgpr = -1;
+    std::int32_t vertexInputSgpr = -1;
 };
 
 class InstructionTranslator {
