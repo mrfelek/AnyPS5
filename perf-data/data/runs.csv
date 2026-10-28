@@ -66,3 +66,9 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07e NO_WRITTEN_SHADOW,A4 shadow off,93,108.3,102.6,98.3,19.0,,,,10.3,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
 2026-10-26,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v5,relocation on,145,69.0,44.0,,,,,,,runs/2026-10-26-sonic-s2-menu-draw-cache-fixed-words.md
 2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07e+f32-probe-v2-rebased NO_WRITTEN_SHADOW,B4 shadow off,110,91.4,77.3,92.2,21.8,,,,10.5,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v6,m1,143.5,69.8,47.1,,,,,,,runs/2026-10-28-sonic-s2-menu-draw-cache-forwarded-patch.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v6,d1,138.0,72.5,47.0,,,,,,,runs/2026-10-28-sonic-s2-menu-draw-cache-forwarded-patch.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v6,m2,136.5,73.3,47.9,,,,,,,runs/2026-10-28-sonic-s2-menu-draw-cache-forwarded-patch.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v6,d2,141.5,71.1,44.0,,,,,,,runs/2026-10-28-sonic-s2-menu-draw-cache-forwarded-patch.md
+2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07ec7,main (trace),76,132.8,128.4,,,,,,,runs/2026-10-26-d2r-main-menu-11297-trace-evidence.md
+2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,84c51093e3e1 (#11297),change (trace),95,105.0,96.7,,,,,,,runs/2026-10-26-d2r-main-menu-11297-trace-evidence.md

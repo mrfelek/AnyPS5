@@ -1,0 +1,23 @@
+**seconds 250:10** from present 3542: 95 presents, frame p50 105.0 / p90 107.8 / p99 112.3 / max 112.3 ms, GPU busy 96.7 ms per present
+NVIDIA GeForce RTX 3080 Ti, NVIDIA 615.71.09, Linux 7.3.0-9-generic, 3840x2160, commit 84c51093e3e1, dropped: yes
+**Slowest frames**
+- present 3631: 112.3 ms at 9369 ms: batch (gpu) 95.9, Driver.Packet (queue worker 0x23) 69.0, Driver.Packet.memory_wait (queue worker 0x23) 69.0, draw (gpu) 60.3
+- present 3561: 111.1 ms at 2004 ms: batch (gpu) 97.1, Driver.Packet (queue worker 0x0) 94.2, Driver.Packet.draw (queue worker 0x0) 85.7, Driver.Draw (queue worker 0x0) 85.2
+- present 3633: 110.5 ms at 9585 ms: batch (gpu) 98.8, Driver.Packet (queue worker 0x23) 67.6, Driver.Packet.memory_wait (queue worker 0x23) 67.6, draw (gpu) 63.0
+- present 3543: 109.9 ms at 103 ms: batch (gpu) 99.5, Driver.Packet (queue worker 0x0) 93.5, Driver.Packet.draw (queue worker 0x0) 85.8, Driver.Draw (queue worker 0x0) 85.2
+- present 3580: 109.8 ms at 4003 ms: batch (gpu) 100.7, Driver.Packet (queue worker 0x0) 93.9, Driver.Packet.draw (queue worker 0x0) 85.5, Driver.Draw (queue worker 0x0) 85.0
+**Threads** (ms per frame)
+| title | 0.6 (1 %) | 0.0 (0 %) | 104.7 | 1.9 | Shader.ResolveGraphicsStagesAbi 0.2, Shader.ResolveGraphicsAbi 0.2 | (8 more title threads: 0.5-0.6 busy, same slices)
+| queue worker 0x23 | 0.0 (0 %) | 104.7 (99 %) | 0.7 | 0.1 | Driver.Packet 61.9, Driver.EndSubmission 0.2 |
+| queue worker 0x0 | 49.5 (47 %) | 0.1 (0 %) | 55.7 | 42.8 | Driver.Packet 49.6, Driver.EndSubmission 0.0 |
+| draw committer | 48.9 (46 %) | 0.0 (0 %) | 56.4 | 34.6 | Graphics.Draw 48.7, Recorder.Submit 0.1 |
+| presenter | 0.4 (0 %) | 33.2 (32 %) | 71.8 | 0.1 | VideoOut.Flip 33.6 |
+| gpu | 96.5 (92 %) | 0.0 (0 %) | 8.8 | 0.0 | batch 96.5 |
+**Largest slices**: Driver.Packet 111.5, batch 96.5, Driver.Packet.memory_wait 61.9, draw 60.2, Graphics.Draw 48.7, Driver.Packet.draw 45.4, Driver.Draw 45.1, Graphics.Draw.draw_and_resource_release 43.3, Driver.WorkerWait 42.6, Driver.WorkerWait.idle_and_completion_poll 42.6
+**Longest waits**: Driver.Packet.memory_wait (queue worker 0x23) 69.0 ms at 9413 ms, present 3631; 68.4 at 2047 (3561); 67.4 at 9629 (3633); 66.9 at 8576 (3623); 65.8 at 7941 (3617); 65.7 at 148 (3543); 65.4 at 5629 (3595); 65.1 at 1516 (3556); 65.0 at 8047 (3618); 65.0 at 7834 (3616)
+**Largest GPU batches**
+- batch 60300: 21.6 ms at 2891 ms, present 3569: GPU staging-out 12.6, staging-in 8.5, draw 0.0; recorded by Graphics.Draw (draw committer) 0.1, draw_and_resource_release 0.1
+- batch 60379: 21.5 ms at 3103 ms, present 3571: GPU staging-out 11.3, staging-in 9.0, draw 0.0; recorded by Graphics.Draw 0.1, draw_and_resource_release 0.1
+- batch 62889: 21.2 ms at 9835 ms, present 3635: GPU staging-out 10.4, staging-in 10.2, dispatch-trail 0.0; recorded by Graphics.Draw 0.1, draw_and_resource_release 0.1
+- batch 59636: 21.0 ms at 1088 ms, present 3552: GPU staging-out 11.3, staging-in 9.1, draw 0.0; recorded by Graphics.Draw 0.1, draw_and_resource_release 0.1
+- batch 60339: 21.0 ms at 2997 ms, present 3570: GPU staging-out 11.9, staging-in 8.5, draw 0.0; recorded by Graphics.Draw 0.1, draw_and_resource_release 0.1
