@@ -48,6 +48,12 @@ Follow-up on "resource cache entries rebuilt under the same key". Build: upstrea
 - **Main reason: "texture refreshed per use".** The cumulative counters read 533,656 -> 562,506 builds blocked because a texture is refreshed on every use (about 29,000 per 10 s), against 49,104 -> 50,932 reusable builds. Other reasons are near zero (copied writes 21, no direct regions 37).
 - The resource cache still shows almost all misses with the same key as an existing entry (264,693 -> 278,499 cumulative), about 29,000 misses per 10 s against about 38,000 hits.
 - **Caveat: this counter build is slower than the earlier baseline in every window**, so it likely adds work of its own: vertex phase 2.1-2.5 s per 10 s (about 0.25 before), recorded draw 75-86 us (43), upload 417-464 ms (about 92), committer 76-79 us per commit (about 46), 50 presents per 10 s (54), frame p50 196 ms. GPU busy per present is unchanged at 183.9 ms. Use it for the reasons, not for speed.
+- **Where the slowdown comes from (checked 2026-10-28):** the setup and caches were identical to the baseline (same script, same shader cache, 100% pipeline cache hits in both). The difference is the buffer import lookup: 2.1 s per 10 s in the baseline vs 11.9 s in this build, at about the same upload count, which fits the vertex phase jump (0.25 -> 2.3 s) and the upload sub-phase (92 -> 417-464 ms). So the extra time comes from the counter diff's own code on the import lookup path, not from the scene or the cache. Last menu window, verbatim:
+
+```
+baseline: [buffers] 666000 uploads: import lookup 2086 ms, buffer allocation 1 ms, guest read 0 ms; copies on the GPU: 7498 regions (17964066 KiB) copied out of imports, 7498 written sub-ranges (17964066 KiB) copied back, 0 staging stores by the CPU at write-back
+counters: [buffers] 638000 uploads: import lookup 11943 ms, buffer allocation 8 ms, guest read 0 ms; copies on the GPU: 7112 regions (17055244 KiB) copied out of imports, 7112 written sub-ranges (17055244 KiB) copied back, 0 staging stores by the CPU at write-back
+```
 
 **Way to go:** find out why those textures count as refreshed on every use and whether an unchanged texture can keep its build; that is what blocks reuse in this menu.
 
