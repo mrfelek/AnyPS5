@@ -112,3 +112,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,cc672fdfc6 revert a293f7901b,b2 B,165,60.6,38.4,,,,,,7.3,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + staging-uses trace,trace,94.0,107.1,94.9,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 + staging-uses trace,trace,85,118.0,86.6,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,A1 routes off,87.0,115.8,101.7,,,,,,9.8,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,B1 routes on,101.0,99.6,94.7,,,,,,9.4,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,A2 routes off,95.0,105.3,93.7,,,,,,10.0,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,B2 routes on,100.0,100.1,95.1,,,,,,9.7,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md

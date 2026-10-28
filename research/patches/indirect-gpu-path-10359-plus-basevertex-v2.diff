@@ -1,0 +1,1546 @@
+diff --git a/core/libs/prx/libSceAgcDriver/CMakeLists.txt b/core/libs/prx/libSceAgcDriver/CMakeLists.txt
+index 2fec1e493e..961a35f845 100644
+--- a/core/libs/prx/libSceAgcDriver/CMakeLists.txt
++++ b/core/libs/prx/libSceAgcDriver/CMakeLists.txt
+@@ -2598,6 +2598,24 @@ if(BUILD_TESTING)
+             set_tests_properties(${packedStorageTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+         endif()
+     endforeach()
++    foreach(instanceInputMode IN ITEMS late-fallback verify fallback-key uncached)
++        string(REPLACE "-" "_" instanceInputSuffix "${instanceInputMode}")
++        set(instanceInputTest agc_driver_gpu_indirect_instance_input_${instanceInputSuffix})
++        add_test(NAME ${instanceInputTest} COMMAND agc_driver_gpu_indirect_instance_input_tests --${instanceInputMode})
++        set_tests_properties(${instanceInputTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
++        if(WIN32)
++            set_tests_properties(${instanceInputTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
++        endif()
++    endforeach()
++    foreach(vertexInputMode IN ITEMS late-fallback verify fallback-key uncached)
++        string(REPLACE "-" "_" vertexInputSuffix "${vertexInputMode}")
++        set(vertexInputTest agc_driver_gpu_indirect_vertex_input_${vertexInputSuffix})
++        add_test(NAME ${vertexInputTest} COMMAND agc_driver_gpu_indirect_vertex_input_tests --${vertexInputMode})
++        set_tests_properties(${vertexInputTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
++        if(WIN32)
++            set_tests_properties(${vertexInputTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
++        endif()
++    endforeach()
+     foreach(prebuildPolicyMode IN ITEMS unset 0 1)
+         set(prebuildPolicyTest agc_driver_prepared_graphics_prebuild_${prebuildPolicyMode})
+         add_test(NAME ${prebuildPolicyTest} COMMAND agc_driver_prepared_graphics_tests --prebuild-${prebuildPolicyMode})
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp
+index 5f3df6c538..d79ae9a115 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp
+@@ -46,6 +46,7 @@ struct DispatchVariant {
+     std::uint64_t relocatableWords = 0;
+     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
+     std::uint64_t userDataMask = ~std::uint64_t{0};
++    std::uint64_t resourceUserDataMask = ~std::uint64_t{0};
+     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
+ 
+     std::shared_ptr<ShaderMemory> memory;
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp
+index 849a7997bb..68348c48d4 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp
+@@ -96,7 +96,7 @@ public:
+     [[nodiscard]] std::vector<std::array<std::uint64_t, 2>> PreparedEntryHashes(const Shader* shader);
+     [[nodiscard]] std::array<std::uint64_t, 4> PrebuiltLibraries();
+     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
+-    static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
++    static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect, std::int32_t instanceInputSgpr = -1, std::int32_t vertexInputSgpr = -1);
+     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied = {});
+     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix = {});
+     DrawEntryCounters DrawCacheCounters();
+@@ -198,7 +198,7 @@ private:
+     std::shared_ptr<DrawDecode> decodeDraw(const QueueState& queue, const Submission& submission, const Graphics::Context& context);
+     void resolveDrawDecode(const QueueState& queue, const Submission& submission, const Graphics::Context& context, std::shared_ptr<const DrawDecode>& decode, bool registerKey, std::uint64_t drawKey, bool profile);
+     void lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::shared_ptr<DrawEntry>& dataEntry, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData);
+-    std::shared_ptr<const ShaderRecompiler::RecompileResult> materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics);
++    std::shared_ptr<const ShaderRecompiler::RecompileResult> materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics, std::int32_t instanceInputSgpr = -1, std::int32_t vertexInputSgpr = -1);
+     static void recordStageDataPositions(DispatchVariant& variant, const ShaderRecompiler::ResourceCapture& capture, const std::vector<Graphics::DecodeRead>& decodeReads);
+     void cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawParameters& drawParameters, const std::optional<Graphics::IndirectDrawPath>& indirectCpu, const std::vector<DrawProgram>& programs, const std::vector<StageCapture>& stageCaptures, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, const std::vector<std::vector<Graphics::DecodeRead>>& decodeReads, bool verifyHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<StageDataHit>& stageData, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::uint64_t drawKey, bool registerKey, const std::shared_ptr<const DrawDecode>& decode, DrawPhaseTiming& phaseTiming, const std::vector<bool>& reused, const std::shared_ptr<DrawEntry>& entry, std::uint64_t shapeKey, bool shapeNeedsEntry = false);
+     static bool drawPrecheck();
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+index e26442387b..2d85c145fb 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp
+@@ -25,6 +25,7 @@
+ #include <map>
+ #include <cstdio>
+ #include <cstring>
++#include <new>
+ #include <unordered_map>
+ #include <atomic>
+ #include <exception>
+@@ -907,6 +908,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+     };
+     std::optional<Graphics::IndirectDrawPath> indirectCpu;
+     std::size_t completedSubdraws = 0;
++    std::int32_t instanceInputSgpr = -1;
++    std::int32_t vertexInputSgpr = -1;
+     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
+     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
+     std::vector<std::size_t> resultIndex(programs.size(), 0);
+@@ -948,6 +951,37 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+         const auto& result = *programResults[i];
+         if (i == 0 && drawParameters.indirect) {
+             indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
++            static const bool inputRoutes = std::getenv("APS5_NO_INDIRECT_INPUT_ROUTES") == nullptr;
++            if (inputRoutes && indirectCpu == Graphics::IndirectDrawPath::NotFolded && program.binary.stage == Stage::Vertex && program.firstUserSgpr == 8u && !graphics.rectList && !graphics.stages.mesh && !graphics.stages.tessellation) {
++                const auto& indirect = *drawParameters.indirect;
++                const auto resourceMask = recompiled[0] ? stageCaptures[0].userDataUse.asBase | stageCaptures[0].userDataUse.asValue : matched[0] != nullptr ? matched[0]->resourceUserDataMask : ~std::uint64_t{0};
++                const auto inputSgpr = [&](std::uint32_t location) {
++                    if (location == 0x280u) return -1;
++                    const auto words = UserDataWords(programs, roles, location);
++                    if (words.size() != 1u || words.front().first != 0u || words.front().second >= 64u) return -1;
++                    const auto word = words.front().second;
++                    bool decoded = false;
++                    if (vertexInfos[0] && vertexInfos[0]->resourcesNum != 0u) {
++                        for (const auto reg : {vertexInfos[0]->fetchAttribReg, vertexInfos[0]->fetchBufferReg}) decoded |= word == reg || word == reg + 1u;
++                    }
++                    if (decoded || (resourceMask & (std::uint64_t{1} << word)) != 0u) return -1;
++                    return static_cast<std::int32_t>(program.firstUserSgpr + word);
++                };
++                const auto instance = inputSgpr(indirect.startInstanceLocation);
++                const auto vertex = inputSgpr(indirect.baseVertexLocation);
++                if (traceIndirect) std::fprintf(stderr, "[draw] indirect draw-parameter routes: instance s%d vertex s%d (user words read by resources 0x%llx, vertex resources %u)\n", instance, vertex, static_cast<unsigned long long>(resourceMask), vertexInfos[0] ? vertexInfos[0]->resourcesNum : 0u);
++                const std::array<std::pair<std::int32_t, std::int32_t>, 3> routes{{{instance, vertex}, {instance, -1}, {-1, vertex}}};
++                for (const auto& [instanceRoute, vertexRoute] : routes) {
++                    if (instanceRoute < 0 && vertexRoute < 0) continue;
++                    if (!ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect, instanceRoute, vertexRoute)) {
++                        indirectCpu.reset();
++                        instanceInputSgpr = instanceRoute;
++                        vertexInputSgpr = vertexRoute;
++                        break;
++                    }
++                }
++                if (indirectCpu) static_cast<void>(ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, false));
++            }
+             if (EmptyIndirectSkip()) CpuIndirectPrograms()[programs.front().binary.codeAddress] = indirectCpu.has_value();
+         } else if (i == 0) {
+             fold(result, drawParameters);
+@@ -1083,6 +1117,21 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+         snapshots.reserve(memory.size());
+         for (const auto& region : memory) snapshots.push_back({region.guestAddress, region.bytes});
+     };
++    if (instanceInputSgpr >= 0 || vertexInputSgpr >= 0) {
++        auto dynamicCaptures = stageCaptures;
++        auto dynamicRecompiled = recompiled;
++        try {
++            const auto compiled = materializeDrawStage(0, pushOffsets[0], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, dynamicCaptures, dynamicRecompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, instanceInputSgpr, vertexInputSgpr);
++            require(compiled->pushConstants.size() <= programResults[0]->pushConstants.size() && compiled->parameterExports == programResults[0]->parameterExports, "dynamic draw-parameter input changed the linked stage interface");
++            compiledStages.push_back(compiled);
++            programResults[0] = compiled.get();
++            stages[0].program = compiled.get();
++        } catch (const std::bad_alloc&) {
++            throw;
++        } catch (const std::exception&) {
++            indirectCpu = Graphics::IndirectDrawPath::NotFolded;
++        }
++    }
+     snapshot();
+     timing.Mark("post_compile_prepare");
+     const auto lockForDraw = [&] {
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
+index 6697f87de7..0e3330501b 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp
+@@ -60,7 +60,7 @@ void TraceShaderRequestFailure(std::uint64_t token, const Submission& submission
+ 
+ }
+ 
+-std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics) try {
++std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics, std::int32_t instanceInputSgpr, std::int32_t vertexInputSgpr) try {
+     PerformanceTimer timing("Shader.DrawStage");
+     using Stage = ShaderRecompiler::ShaderStage;
+     phaseTiming.Phase(DrawRowVectors);
+@@ -77,6 +77,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
+         request.layout.pushConstantSizeBytes = std::min(request.layout.pushConstantSizeBytes, ShaderRecompiler::DepthRemapPushOffsetBytes - pushOffset);
+     }
+     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
++    request.graphics->instanceInputSgpr = instanceInputSgpr;
++    request.graphics->vertexInputSgpr = vertexInputSgpr;
+     auto invocation = [&] {
+         try {
+             return InvocationFor(*program.snapshot, program.codeOffset, request);
+@@ -232,6 +234,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
+             variant->forgetSerial = stageCapture.forgetSerial;
+             variant->pushOffset = stageCapture.pushOffset;
+             variant->userDataMask = stageCapture.userDataMask;
++            variant->resourceUserDataMask = stageCapture.userDataUse.asBase | stageCapture.userDataUse.asValue;
+             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);
+ 
+             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
+diff --git a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/IndirectDraw.cpp b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/IndirectDraw.cpp
+index fa1676e68c..636af112c0 100644
+--- a/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/IndirectDraw.cpp
++++ b/core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/IndirectDraw.cpp
+@@ -2,7 +2,9 @@
+ #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+ #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
++#include <algorithm>
+ #include <cstdlib>
++#include <spirv/unified1/spirv.hpp>
+ 
+ namespace AgcDriver::DriverDetail {
+ 
+@@ -22,7 +24,7 @@ void Driver::FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, co
+     if (result.instanceOffsetSgpr >= 0) parameters.firstInstance = drawUserWord(program, result.instanceOffsetSgpr);
+ }
+ 
+-std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect) {
++std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect, std::int32_t instanceInputSgpr, std::int32_t vertexInputSgpr) {
+     std::optional<Graphics::IndirectDrawPath> indirectCpu;
+     auto& indirect = *drawParameters.indirect;
+     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
+@@ -51,8 +53,27 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
+         else if (x != 0) fail(Path::IndxOffset);
+         else rule = Rule::InPlace;
+     };
+-    dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, indirect.vertexRule, indirect.vertexConstant);
+-    dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
++    const auto drawParametersSupported = [&] {
++        const auto target = localDevice->Target();
++        return std::ranges::find(target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityDrawParameters)) != target.supportedCapabilities.end();
++    };
++    if (vertexInputSgpr >= 0) {
++        if (vertexInputSgpr != indirect.baseVertexSgpr || vertexInputSgpr == indirect.startInstanceSgpr || result.vertexOffsetSgpr >= 0 || (!drawParameters.indexed && indirect.indxOffset != 0) ||
++            graphics.stages.path != Graphics::ShaderPath::Vertex || graphics.rectList || graphics.stages.mesh || graphics.stages.tessellation || !result.vertexAttributes.empty()) fail(Path::NotFolded);
++        if (!drawParametersSupported()) fail(Path::FeatureGap);
++        indirect.vertexRule = Rule::InPlace;
++    } else {
++        dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, indirect.vertexRule, indirect.vertexConstant);
++    }
++    if (instanceInputSgpr >= 0) {
++        if (instanceInputSgpr != indirect.startInstanceSgpr || instanceInputSgpr == indirect.baseVertexSgpr || result.instanceOffsetSgpr >= 0 ||
++            graphics.stages.path != Graphics::ShaderPath::Vertex || graphics.rectList || graphics.stages.mesh || graphics.stages.tessellation ||
++            std::ranges::any_of(result.vertexAttributes, [](const auto& attribute) { return attribute.fetchIndex != 0u; })) fail(Path::NotFolded);
++        if (!drawParametersSupported()) fail(Path::FeatureGap);
++        indirect.instanceRule = Rule::InPlace;
++    } else {
++        dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
++    }
+     if (!support.firstInstance && (indirect.instanceRule == Rule::InPlace || indirect.instanceConstant != 0)) fail(Path::FeatureGap);
+     if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 256) fail(Path::FeatureGap);
+ 
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderValidation.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderValidation.cpp
+index bdd1dedfcb..88f96219f9 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderValidation.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/ShaderValidation.cpp
+@@ -153,7 +153,7 @@ struct Module {
+         }
+         const auto signature = Signature(type);
+         if (vertex && storage == spv::StorageClassInput) {
+-            Require((value == spv::BuiltInVertexIndex || value == spv::BuiltInInstanceIndex || value == spv::BuiltInBaseInstance) && signature == "i32", "unsupported vertex built-in input");
++            Require((value == spv::BuiltInVertexIndex || value == spv::BuiltInInstanceIndex || value == spv::BuiltInBaseInstance || value == spv::BuiltInBaseVertex) && signature == "i32", "unsupported vertex built-in input");
+         } else if (vertex && storage == spv::StorageClassOutput) {
+             if (value == spv::BuiltInLayer && layerOutput && (signature == "u32" || signature == "i32")) return;
+             if (value == spv::BuiltInPointSize && pointSizeOutput && signature == "f32" && !pointSize) {
+diff --git a/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp b/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
+index e9386d1426..b2121000e2 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
+@@ -6363,7 +6363,7 @@ void verifyPixelRequestSerialization() {
+     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
+         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
+     }
+-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA="}) {
++    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTQAAAA="}) {
+         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
+     }
+     static constexpr std::string_view version18Request{
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/EmptyIndirectSkip.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/EmptyIndirectSkip.cpp
+index 6a85e68f65..341d8ef637 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/EmptyIndirectSkip.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/EmptyIndirectSkip.cpp
+@@ -143,8 +143,10 @@ int main() {
+     try {
+ #ifdef _WIN32
+         _putenv_s("APS5_PROFILE_DRAW", "1");
++        _putenv_s("APS5_NO_INDIRECT_INPUT_ROUTES", "1");
+ #else
+         setenv("APS5_PROFILE_DRAW", "1", 1);
++        setenv("APS5_NO_INDIRECT_INPUT_ROUTES", "1", 1);
+ #endif
+         {
+             const auto device = OpenVulkanTestDevice();
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/GpuIndirectInstanceInput.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/GpuIndirectInstanceInput.cpp
+new file mode 100644
+index 0000000000..48f4f27e1c
+--- /dev/null
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/GpuIndirectInstanceInput.cpp
+@@ -0,0 +1,297 @@
++#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
++#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
++#include "prx/libc/include/GuestAllocations.hpp"
++#include "VulkanTestDevice.hpp"
++#include <algorithm>
++#include <array>
++#include <bit>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <iostream>
++#include <new>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace {
++
++using AgcDriver::Graphics::Require;
++constexpr std::uint32_t Sentinel = 0xdeadbeefu;
++constexpr std::uint32_t Marker = 0x5a17c0deu;
++constexpr std::size_t AllocationBytes = 65536u;
++alignas(256) std::array<std::uint32_t, 96> Output{};
++alignas(256) std::array<std::uint32_t, 16> Table{};
++alignas(256) std::array<std::byte, 1024> Pixels{};
++alignas(256) std::array<std::uint32_t, 8> RecordDescriptor{};
++alignas(256) constexpr std::array<std::uint16_t, 3> Indices{0, 1, 2};
++std::uint32_t* Records = nullptr;
++
++alignas(256) constexpr std::array<std::uint32_t, 36> VertexCode{
++    0x4a0814f9u, 0x84060608u,
++    0xf4100204u, 0xfa000000u, 0xbf8cc07fu,
++    0x7e000304u, 0x7e020305u, 0x7e04020au, 0x7e0602ffu, 0x12345678u,
++    0x360c0087u, 0x4a0e0d06u, 0x4a0c0d07u, 0x4a0c0b06u, 0x340e0c84u,
++    0xe0781000u, 0x80030007u,
++    0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u,
++    0x060400f3u, 0x10040500u, 0x060404f3u,
++    0x7e060280u, 0x7e0802f2u, 0x7e0a02ffu, 0x44800000u,
++    0xf80000d1u, 0x00000005u, 0xf80008cfu, 0x04030201u,
++    0xbf810000u, 0xbf810000u, 0xbf810000u,
++};
++alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{
++    0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
++};
++alignas(256) constexpr std::array<std::uint32_t, 10> WriterCode{
++    0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000202u, 0x7e020203u, 0x7e040204u, 0x7e060205u,
++    0xe0780000u, 0x80020000u, 0xbf810000u,
++};
++
++struct Header {
++    Shader shader{};
++    ShaderUserData userData{};
++};
++alignas(8) Header VertexHeader{};
++alignas(8) Header PixelHeader{};
++
++std::uint32_t Low(const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer)); }
++std::uint32_t High(const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 32u); }
++
++void Register(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
++    header.shader.file_header = 0x34333231u;
++    header.shader.version = 0x18u;
++    header.shader.header_size = sizeof(Header);
++    header.shader.shader_size = static_cast<std::uint32_t>(bytes);
++    header.shader.code = code;
++    header.shader.type = type;
++    header.shader.user_data = &header.userData;
++    AgcDriverRegisterShader_nid_postfix(&header.shader);
++}
++
++void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
++    commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1u) << 16u) | (opcode << 8u));
++    commands.insert(commands.end(), payload);
++}
++
++void State(std::vector<std::uint32_t>& commands, std::uint32_t wave, std::uint32_t base) {
++    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
++    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
++    const auto color = reinterpret_cast<std::uintptr_t>(Pixels.data());
++    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
++        {0x2d5, 0x2000u | (wave == 32u ? 0x400000u : 0u)},
++        {0x1b6, wave == 32u ? 0x8000u : 0u}, {0x207, 0x01200000}, {0x200, 0}, {0x203, 0x800},
++        {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
++        {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa},
++        {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
++        {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240},
++        {0x8e, 0xf}, {0x8f, 0xf}, {0x202, 0xcc0010},
++        {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4}, {0x31c, 0x28028},
++        {0x31b, 0}, {0x31d, 0}, {0x3b0, (63u << 14u) | 3u},
++        {0x3b8, 0x9000000}, {0x1e0, 0},
++        {0xc, 0}, {0xd, 0x40040}, {0x81, 0x80000000}, {0x82, 0x40040},
++        {0x90, 0x80000000}, {0x91, 0x40040}, {0x94, 0x80000000}, {0x95, 0x40040},
++        {0x10f, std::bit_cast<std::uint32_t>(32.0f)}, {0x110, std::bit_cast<std::uint32_t>(32.0f)},
++        {0x111, std::bit_cast<std::uint32_t>(-2.0f)}, {0x112, std::bit_cast<std::uint32_t>(2.0f)},
++        {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0},
++        {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
++        {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
++        {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)},
++    };
++    const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
++        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 4u << 1u},
++        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 1u << 1u}, {0x00c, std::bit_cast<std::uint32_t>(1.0f)},
++        {0x8c, Low(Table.data())}, {0x8d, High(Table.data())}, {0x8e, base}, {0x8f, 0u},
++    };
++    Append(commands, 0x79, {0x242, 4});
++    Append(commands, 0x79, {0x24a, 0});
++    for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
++    for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
++}
++
++void WriteRecord(std::vector<std::uint32_t>& commands, std::uint32_t base, std::uint32_t instances, std::uint32_t record = 0u) {
++    const auto code = reinterpret_cast<std::uintptr_t>(WriterCode.data());
++    Append(commands, 0x76, {0x20c, static_cast<std::uint32_t>(code >> 8u)});
++    Append(commands, 0x76, {0x20d, static_cast<std::uint32_t>(code >> 40u)});
++    for (const auto offset : {0x207u, 0x208u, 0x209u}) Append(commands, 0x76, {offset, 1u});
++    Append(commands, 0x76, {0x212, 0});
++    Append(commands, 0x76, {0x213, 6u << 1u});
++    const auto* descriptor = RecordDescriptor.data() + record * 4u;
++    const std::array<std::uint32_t, 6> words{Low(descriptor), High(descriptor), 3u, instances, 0u, base};
++    for (std::uint32_t i = 0; i < words.size(); ++i) Append(commands, 0x76, {0x240u + i, words[i]});
++    Append(commands, 0x15, {1, 1, 1, 0x8041u});
++}
++
++void Submit(std::vector<std::uint32_t>& commands) {
++    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
++    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the instance-input submission failed");
++    AgcDriverWaitIdle_nid_postfix();
++}
++
++void Check(std::uint32_t base, std::uint32_t instances, std::uint32_t secondBase = 0u, std::uint32_t secondInstances = 0u) {
++    std::array<std::uint32_t, Output.size()> expected{};
++    expected.fill(Sentinel);
++    for (const auto& [start, count] : {std::pair{base, instances}, std::pair{secondBase, secondInstances}}) {
++        for (std::uint32_t instance = 0; instance < count; ++instance) {
++            const auto index = instance + (start & 0xffffu);
++            for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) {
++                const auto at = ((index & 7u) * 3u + vertex) * 4u;
++                expected[at] = index;
++                expected[at + 1u] = vertex;
++                expected[at + 2u] = Marker;
++                expected[at + 3u] = 0x12345678u;
++            }
++        }
++    }
++    for (std::size_t i = 0; i < Output.size(); ++i) Require(Output[i] == expected[i],
++        "base " + std::to_string(base) + " word " + std::to_string(i) + " is " + std::to_string(Output[i]) + ", expected " + std::to_string(expected[i]));
++}
++
++using Counts = decltype(AgcDriver::Graphics::IndirectDrawCounts());
++
++void CheckPath(const Counts& before, AgcDriver::Graphics::IndirectDrawPath expected) {
++    const auto after = AgcDriver::Graphics::IndirectDrawCounts();
++    for (std::size_t path = 0; path < after.size(); ++path) Require(after[path] == before[path] + (path == static_cast<std::size_t>(expected) ? 1u : 0u),
++        "unexpected indirect draw count for " + std::string(AgcDriver::Graphics::IndirectDrawPathName(static_cast<AgcDriver::Graphics::IndirectDrawPath>(path))) + ": " + std::to_string(after[path] - before[path]));
++}
++
++void Run() {
++    Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
++    Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
++    Table.fill(0u);
++    Table[2] = Marker;
++    const std::array<std::uint32_t, 4> descriptor{Low(Output.data()), High(Output.data()) & 0xffffu, sizeof(Output), 0x31016facu};
++    std::copy(descriptor.begin(), descriptor.end(), Table.begin() + 4u);
++    RecordDescriptor = {Low(Records), High(Records) & 0xffffu, AllocationBytes, 0x31016facu,
++        Low(Records + 4u), High(Records + 4u) & 0xffffu, AllocationBytes - 16u, 0x31016facu};
++    const auto selected = std::getenv("APS5_NO_GPU_INDIRECT_DRAW") != nullptr ? AgcDriver::Graphics::IndirectDrawPath::Disabled : AgcDriver::Graphics::IndirectDrawPath::Gpu;
++    constexpr std::array<std::uint32_t, 7> bases{0u, 65535u, 65536u, 65537u, 917966u, 0x80000000u, 0xffffffffu};
++    for (const auto wave : {32u, 64u}) {
++        for (const auto base : bases) {
++            const auto instances = base == 0xffffffffu ? 1u : 3u;
++            for (const bool indirect : {false, true, false, true}) {
++                Output.fill(Sentinel);
++                std::fill_n(Records, 4u, 0u);
++                std::vector<std::uint32_t> commands;
++                State(commands, wave, indirect ? 0xbadc0ffeu : base);
++                const auto before = AgcDriver::Graphics::IndirectDrawCounts();
++                if (indirect) {
++                    WriteRecord(commands, base, instances);
++                    Append(commands, 0x11, {1, Low(Records), High(Records)});
++                    Append(commands, 0x24, {0, 0x280, 0x8e, 2});
++                } else {
++                    Append(commands, 0x2f, {instances});
++                    Append(commands, 0x2d, {3, 2});
++                }
++                Submit(commands);
++                Check(base, instances);
++                if (indirect) {
++                    Require(Records[0] == 3u && Records[1] == instances && Records[2] == 0u && Records[3] == base, "the compute shader did not write the indirect record");
++                    CheckPath(before, selected);
++                }
++            }
++        }
++    }
++    for (const auto location : {0x8fu, 0x8eu, 0x8cu, 0x8du, 0x8fu}) {
++        Output.fill(Sentinel);
++        std::fill_n(Records, 4u, 0u);
++        const bool pointer = location == 0x8cu || location == 0x8du;
++        const auto patched = pointer ? location == 0x8cu ? Low(Table.data()) : High(Table.data()) : 0x80000000u;
++        const auto base = location == 0x8eu ? patched : 5u;
++        std::vector<std::uint32_t> commands;
++        State(commands, 64u, location == 0x8eu ? 0xbadc0ffeu : base);
++        WriteRecord(commands, patched, 3u);
++        Append(commands, 0x11, {1, Low(Records), High(Records)});
++        Append(commands, 0x24, {0, 0x280, location, 2});
++        const auto before = AgcDriver::Graphics::IndirectDrawCounts();
++        Submit(commands);
++        Check(base, 3u);
++        CheckPath(before, pointer ? AgcDriver::Graphics::IndirectDrawPath::NotFolded : selected);
++    }
++    Output.fill(Sentinel);
++    std::fill_n(Records, 8u, 0u);
++    std::vector<std::uint32_t> commands;
++    State(commands, 64u, 0xbadc0ffeu);
++    WriteRecord(commands, 65536u, 2u);
++    WriteRecord(commands, 917966u, 2u, 1u);
++    Append(commands, 0x11, {1, Low(Records), High(Records)});
++    Append(commands, 0x2c, {0, 0x280, 0x8e, 0, 2, 0, 0, 16, 2});
++    const auto before = AgcDriver::Graphics::IndirectDrawCounts();
++    Submit(commands);
++    Check(65536u, 2u, 917966u, 2u);
++    CheckPath(before, selected);
++    Output.fill(Sentinel);
++    const std::array<std::uint32_t, 5> indexedRecord{3u, 3u, 0u, 0u, 917966u};
++    std::copy(indexedRecord.begin(), indexedRecord.end(), Records);
++    commands.clear();
++    State(commands, 64u, 0xbadc0ffeu);
++    Append(commands, 0x2a, {0});
++    Append(commands, 0x26, {Low(Indices.data()), High(Indices.data())});
++    Append(commands, 0x13, {3});
++    Append(commands, 0x11, {1, Low(Records), High(Records)});
++    Append(commands, 0x25, {0, 0x280, 0x8e, 0});
++    const auto indexedBefore = AgcDriver::Graphics::IndirectDrawCounts();
++    Submit(commands);
++    Check(917966u, 3u);
++    CheckPath(indexedBefore, selected);
++    std::puts("GPU-written single/multi-record and indexed draws retained masked arithmetic across direct/indirect and SGPR-route alternation; resource-pointer patches retained CPU fallback");
++}
++
++void Cleanup() {
++    AgcDriverShutdown_nid_postfix();
++    if (Records != nullptr) {
++        {
++            GuestAllocations::Mutation mutation;
++            mutation.RequireUnpinned(Records, AllocationBytes);
++            mutation.Remove(Records);
++        }
++        ::operator delete(Records, std::align_val_t{AllocationBytes});
++        Records = nullptr;
++    }
++}
++
++}
++
++int main(int argc, char** argv) {
++    try {
++        if (argc == 2 && std::string(argv[1]) == "--late-fallback") {
++#ifdef _WIN32
++            _putenv_s("APS5_NO_GPU_INDIRECT_DRAW", "1");
++#else
++            setenv("APS5_NO_GPU_INDIRECT_DRAW", "1", 1);
++#endif
++        }
++        const auto enable = [](const char* name) {
++#ifdef _WIN32
++            _putenv_s(name, "1");
++#else
++            setenv(name, "1", 1);
++#endif
++        };
++        enable("APS5_PROFILE_DRAW");
++        if (argc == 2 && std::string(argv[1]) == "--verify") {
++            enable("APS5_VERIFY_DRAW_ENTRIES");
++            enable("APS5_VERIFY_DRAW_DATA_HITS");
++            enable("APS5_VERIFY_DRAW_RECIPE");
++        }
++        if (argc == 2 && std::string(argv[1]) == "--fallback-key") enable("APS5_NO_DRAW_KEY");
++        if (argc == 2 && std::string(argv[1]) == "--uncached") enable("APS5_NO_DRAW_SRT_ENTRIES");
++        {
++            const auto device = OpenVulkanTestDevice();
++            if (!device) return VulkanTestSkipped;
++        }
++        Records = static_cast<std::uint32_t*>(::operator new(AllocationBytes, std::align_val_t{AllocationBytes}));
++        {
++            GuestAllocations::Mutation mutation;
++            mutation.Add(Records, AllocationBytes, true, true, true);
++        }
++        Run();
++        Cleanup();
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << error.what() << '\n';
++        Cleanup();
++        return 1;
++    }
++}
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/GpuIndirectVertexInput.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/GpuIndirectVertexInput.cpp
+new file mode 100644
+index 0000000000..2017a29295
+--- /dev/null
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/GpuIndirectVertexInput.cpp
+@@ -0,0 +1,295 @@
++#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
++#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
++#include "prx/libc/include/GuestAllocations.hpp"
++#include "VulkanTestDevice.hpp"
++#include <algorithm>
++#include <array>
++#include <bit>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <iostream>
++#include <new>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace {
++
++using AgcDriver::Graphics::Require;
++constexpr std::uint32_t Sentinel = 0xdeadbeefu;
++constexpr std::uint32_t Marker = 0x5a17c0deu;
++constexpr std::size_t AllocationBytes = 65536u;
++alignas(256) std::array<std::uint32_t, 96> Output{};
++alignas(256) std::array<std::uint32_t, 16> Table{};
++alignas(256) std::array<std::byte, 1024> Pixels{};
++alignas(256) std::array<std::uint32_t, 8> RecordDescriptor{};
++alignas(256) constexpr std::array<std::uint16_t, 3> Indices{0, 1, 2};
++std::uint32_t* Records = nullptr;
++
++alignas(256) constexpr std::array<std::uint32_t, 36> VertexCode{
++    0x4a0814f9u, 0x84060605u,
++    0xf4100204u, 0xfa000000u, 0xbf8cc07fu,
++    0x7e000304u, 0x7e020305u, 0x7e04020au, 0x7e0602ffu, 0x12345678u,
++    0x360c0087u, 0x4a0e0d06u, 0x4a0c0d07u, 0x4a0c0b06u, 0x340e0c84u,
++    0xe0781000u, 0x80030007u,
++    0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u,
++    0x060400f3u, 0x10040500u, 0x060404f3u,
++    0x7e060280u, 0x7e0802f2u, 0x7e0a02ffu, 0x44800000u,
++    0xf80000d1u, 0x00000005u, 0xf80008cfu, 0x04030201u,
++    0xbf810000u, 0xbf810000u, 0xbf810000u,
++};
++alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{
++    0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
++};
++alignas(256) constexpr std::array<std::uint32_t, 10> WriterCode{
++    0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000202u, 0x7e020203u, 0x7e040204u, 0x7e060205u,
++    0xe0780000u, 0x80020000u, 0xbf810000u,
++};
++
++struct Header {
++    Shader shader{};
++    ShaderUserData userData{};
++};
++alignas(8) Header VertexHeader{};
++alignas(8) Header PixelHeader{};
++
++std::uint32_t Low(const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer)); }
++std::uint32_t High(const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 32u); }
++
++void Register(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
++    header.shader.file_header = 0x34333231u;
++    header.shader.version = 0x18u;
++    header.shader.header_size = sizeof(Header);
++    header.shader.shader_size = static_cast<std::uint32_t>(bytes);
++    header.shader.code = code;
++    header.shader.type = type;
++    header.shader.user_data = &header.userData;
++    AgcDriverRegisterShader_nid_postfix(&header.shader);
++}
++
++void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
++    commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1u) << 16u) | (opcode << 8u));
++    commands.insert(commands.end(), payload);
++}
++
++void State(std::vector<std::uint32_t>& commands, std::uint32_t wave, std::uint32_t base) {
++    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
++    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
++    const auto color = reinterpret_cast<std::uintptr_t>(Pixels.data());
++    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
++        {0x2d5, 0x2000u | (wave == 32u ? 0x400000u : 0u)},
++        {0x1b6, wave == 32u ? 0x8000u : 0u}, {0x207, 0x01200000}, {0x200, 0}, {0x203, 0x800},
++        {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
++        {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa},
++        {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
++        {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240},
++        {0x8e, 0xf}, {0x8f, 0xf}, {0x202, 0xcc0010},
++        {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4}, {0x31c, 0x28028},
++        {0x31b, 0}, {0x31d, 0}, {0x3b0, (63u << 14u) | 3u},
++        {0x3b8, 0x9000000}, {0x1e0, 0},
++        {0xc, 0}, {0xd, 0x40040}, {0x81, 0x80000000}, {0x82, 0x40040},
++        {0x90, 0x80000000}, {0x91, 0x40040}, {0x94, 0x80000000}, {0x95, 0x40040},
++        {0x10f, std::bit_cast<std::uint32_t>(32.0f)}, {0x110, std::bit_cast<std::uint32_t>(32.0f)},
++        {0x111, std::bit_cast<std::uint32_t>(-2.0f)}, {0x112, std::bit_cast<std::uint32_t>(2.0f)},
++        {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0},
++        {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
++        {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
++        {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)},
++    };
++    const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
++        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 4u << 1u},
++        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 1u << 1u}, {0x00c, std::bit_cast<std::uint32_t>(1.0f)},
++        {0x8c, Low(Table.data())}, {0x8d, High(Table.data())}, {0x8e, base}, {0x8f, 0u},
++    };
++    Append(commands, 0x79, {0x242, 4});
++    Append(commands, 0x79, {0x24a, 0});
++    for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
++    for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
++}
++
++void WriteRecord(std::vector<std::uint32_t>& commands, std::uint32_t base, std::uint32_t record = 0u) {
++    const auto code = reinterpret_cast<std::uintptr_t>(WriterCode.data());
++    Append(commands, 0x76, {0x20c, static_cast<std::uint32_t>(code >> 8u)});
++    Append(commands, 0x76, {0x20d, static_cast<std::uint32_t>(code >> 40u)});
++    for (const auto offset : {0x207u, 0x208u, 0x209u}) Append(commands, 0x76, {offset, 1u});
++    Append(commands, 0x76, {0x212, 0});
++    Append(commands, 0x76, {0x213, 6u << 1u});
++    const auto* descriptor = RecordDescriptor.data() + record * 4u;
++    const std::array<std::uint32_t, 6> words{Low(descriptor), High(descriptor), 3u, 1u, base, 0u};
++    for (std::uint32_t i = 0; i < words.size(); ++i) Append(commands, 0x76, {0x240u + i, words[i]});
++    Append(commands, 0x15, {1, 1, 1, 0x8041u});
++}
++
++void Submit(std::vector<std::uint32_t>& commands) {
++    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
++    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the vertex-input submission failed");
++    AgcDriverWaitIdle_nid_postfix();
++}
++
++void Check(std::uint32_t base, std::uint32_t secondBase = 0u, bool second = false) {
++    std::array<std::uint32_t, Output.size()> expected{};
++    expected.fill(Sentinel);
++    for (const auto& [start, present] : {std::pair{base, true}, std::pair{secondBase, second}}) {
++        if (!present) continue;
++        for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) {
++            const auto index = vertex + (start & 0xffffu);
++            const auto at = ((index & 7u) * 3u + vertex) * 4u;
++            expected[at] = index;
++            expected[at + 1u] = vertex;
++            expected[at + 2u] = Marker;
++            expected[at + 3u] = 0x12345678u;
++        }
++    }
++    for (std::size_t i = 0; i < Output.size(); ++i) Require(Output[i] == expected[i],
++        "base " + std::to_string(base) + " word " + std::to_string(i) + " is " + std::to_string(Output[i]) + ", expected " + std::to_string(expected[i]));
++}
++
++using Counts = decltype(AgcDriver::Graphics::IndirectDrawCounts());
++
++void CheckPath(const Counts& before, AgcDriver::Graphics::IndirectDrawPath expected) {
++    const auto after = AgcDriver::Graphics::IndirectDrawCounts();
++    for (std::size_t path = 0; path < after.size(); ++path) Require(after[path] == before[path] + (path == static_cast<std::size_t>(expected) ? 1u : 0u),
++        "unexpected indirect draw count for " + std::string(AgcDriver::Graphics::IndirectDrawPathName(static_cast<AgcDriver::Graphics::IndirectDrawPath>(path))) + ": " + std::to_string(after[path] - before[path]));
++}
++
++void Run() {
++    Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
++    Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
++    Table.fill(0u);
++    Table[2] = Marker;
++    const std::array<std::uint32_t, 4> descriptor{Low(Output.data()), High(Output.data()) & 0xffffu, sizeof(Output), 0x31016facu};
++    std::copy(descriptor.begin(), descriptor.end(), Table.begin() + 4u);
++    RecordDescriptor = {Low(Records), High(Records) & 0xffffu, AllocationBytes, 0x31016facu,
++        Low(Records + 4u), High(Records + 4u) & 0xffffu, AllocationBytes - 16u, 0x31016facu};
++    const auto selected = std::getenv("APS5_NO_GPU_INDIRECT_DRAW") != nullptr ? AgcDriver::Graphics::IndirectDrawPath::Disabled : AgcDriver::Graphics::IndirectDrawPath::Gpu;
++    constexpr std::array<std::uint32_t, 6> bases{0u, 65535u, 65536u, 65537u, 917966u, 0x80000000u};
++    for (const auto wave : {32u, 64u}) {
++        for (const auto base : bases) {
++            for (const bool indirect : {false, true, false, true}) {
++                Output.fill(Sentinel);
++                std::fill_n(Records, 4u, 0u);
++                std::vector<std::uint32_t> commands;
++                State(commands, wave, indirect ? 0xbadc0ffeu : base);
++                const auto before = AgcDriver::Graphics::IndirectDrawCounts();
++                if (indirect) {
++                    WriteRecord(commands, base);
++                    Append(commands, 0x11, {1, Low(Records), High(Records)});
++                    Append(commands, 0x24, {0, 0x8e, 0x280, 2});
++                } else {
++                    Append(commands, 0x2f, {1u});
++                    Append(commands, 0x2d, {3, 2});
++                }
++                Submit(commands);
++                Check(base);
++                if (indirect) {
++                    Require(Records[0] == 3u && Records[1] == 1u && Records[2] == base && Records[3] == 0u, "the compute shader did not write the indirect record");
++                    CheckPath(before, selected);
++                }
++            }
++        }
++    }
++    for (const auto location : {0x8fu, 0x8eu, 0x8cu, 0x8du, 0x8fu}) {
++        Output.fill(Sentinel);
++        std::fill_n(Records, 4u, 0u);
++        const bool pointer = location == 0x8cu || location == 0x8du;
++        const auto patched = pointer ? location == 0x8cu ? Low(Table.data()) : High(Table.data()) : 0x80000000u;
++        const auto base = location == 0x8eu ? patched : 5u;
++        std::vector<std::uint32_t> commands;
++        State(commands, 64u, location == 0x8eu ? 0xbadc0ffeu : base);
++        WriteRecord(commands, patched);
++        Append(commands, 0x11, {1, Low(Records), High(Records)});
++        Append(commands, 0x24, {0, location, 0x280, 2});
++        const auto before = AgcDriver::Graphics::IndirectDrawCounts();
++        Submit(commands);
++        Check(base);
++        CheckPath(before, pointer ? AgcDriver::Graphics::IndirectDrawPath::NotFolded : selected);
++    }
++    Output.fill(Sentinel);
++    std::fill_n(Records, 8u, 0u);
++    std::vector<std::uint32_t> commands;
++    State(commands, 64u, 0xbadc0ffeu);
++    WriteRecord(commands, 65536u);
++    WriteRecord(commands, 917969u, 1u);
++    Append(commands, 0x11, {1, Low(Records), High(Records)});
++    Append(commands, 0x2c, {0, 0x8e, 0x280, 0, 2, 0, 0, 16, 2});
++    const auto before = AgcDriver::Graphics::IndirectDrawCounts();
++    Submit(commands);
++    Check(65536u, 917969u, true);
++    CheckPath(before, selected);
++    Output.fill(Sentinel);
++    const std::array<std::uint32_t, 5> indexedRecord{3u, 1u, 0u, 917966u, 0u};
++    std::copy(indexedRecord.begin(), indexedRecord.end(), Records);
++    commands.clear();
++    State(commands, 64u, 0xbadc0ffeu);
++    Append(commands, 0x2a, {0});
++    Append(commands, 0x26, {Low(Indices.data()), High(Indices.data())});
++    Append(commands, 0x13, {3});
++    Append(commands, 0x11, {1, Low(Records), High(Records)});
++    Append(commands, 0x25, {0, 0x8e, 0x280, 0});
++    const auto indexedBefore = AgcDriver::Graphics::IndirectDrawCounts();
++    Submit(commands);
++    Check(917966u);
++    CheckPath(indexedBefore, selected);
++    std::puts("GPU-written single/multi-record and indexed draws fed the patched base-vertex SGPR from BaseVertex with the guest vertex index unchanged; resource-pointer patches retained CPU fallback");
++}
++
++void Cleanup() {
++    AgcDriverShutdown_nid_postfix();
++    if (Records != nullptr) {
++        {
++            GuestAllocations::Mutation mutation;
++            mutation.RequireUnpinned(Records, AllocationBytes);
++            mutation.Remove(Records);
++        }
++        ::operator delete(Records, std::align_val_t{AllocationBytes});
++        Records = nullptr;
++    }
++}
++
++}
++
++int main(int argc, char** argv) {
++    try {
++        if (argc == 2 && std::string(argv[1]) == "--late-fallback") {
++#ifdef _WIN32
++            _putenv_s("APS5_NO_GPU_INDIRECT_DRAW", "1");
++#else
++            setenv("APS5_NO_GPU_INDIRECT_DRAW", "1", 1);
++#endif
++        }
++        const auto enable = [](const char* name) {
++#ifdef _WIN32
++            _putenv_s(name, "1");
++#else
++            setenv(name, "1", 1);
++#endif
++        };
++        enable("APS5_PROFILE_DRAW");
++        if (argc == 2 && std::string(argv[1]) == "--verify") {
++            enable("APS5_VERIFY_DRAW_ENTRIES");
++            enable("APS5_VERIFY_DRAW_DATA_HITS");
++            enable("APS5_VERIFY_DRAW_RECIPE");
++        }
++        if (argc == 2 && std::string(argv[1]) == "--fallback-key") enable("APS5_NO_DRAW_KEY");
++        if (argc == 2 && std::string(argv[1]) == "--uncached") enable("APS5_NO_DRAW_SRT_ENTRIES");
++        {
++            const auto device = OpenVulkanTestDevice();
++            if (!device) return VulkanTestSkipped;
++        }
++        Records = static_cast<std::uint32_t*>(::operator new(AllocationBytes, std::align_val_t{AllocationBytes}));
++        {
++            GuestAllocations::Mutation mutation;
++            mutation.Add(Records, AllocationBytes, true, true, true);
++        }
++        Run();
++        Cleanup();
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << error.what() << '\n';
++        Cleanup();
++        return 1;
++    }
++}
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/IndirectInstanceSemantics.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/IndirectInstanceSemantics.cpp
+new file mode 100644
+index 0000000000..b15101a5b8
+--- /dev/null
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/IndirectInstanceSemantics.cpp
+@@ -0,0 +1,294 @@
++#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
++#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
++#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
++#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
++#include "Optimization/ResourceProgram.hpp"
++#include "Recompiler.hpp"
++#include "CacheKey.hpp"
++#include "ControlFlow/RequestSerializer.hpp"
++#include <spirv/unified1/spirv.hpp>
++#include "VulkanTestDevice.hpp"
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cstdio>
++#include <iostream>
++#include <span>
++#include <string>
++#include <vector>
++
++namespace {
++
++using AgcDriver::Graphics::Require;
++using ShaderRecompiler::ShaderStage;
++
++constexpr std::uint32_t Marker = 0x5a17c0deu;
++constexpr std::uint32_t Sentinel = 0xdeadbeefu;
++constexpr std::uint32_t Extent = 64u;
++constexpr std::uint32_t Rows = 8u;
++constexpr std::uint32_t Vertices = 3u;
++constexpr std::uint32_t Components = 4u;
++alignas(256) std::array<std::uint32_t, Rows * Vertices * Components> Output{};
++alignas(256) std::array<std::uint32_t, 16> Table{};
++alignas(256) std::array<std::byte, Extent * Extent * 4u> Pixels{};
++
++constexpr std::array<std::uint32_t, 2> MaskedAdd{0x4a0814f9u, 0x84060608u};
++constexpr std::array<std::uint32_t, 34> Body{
++    0xf4100204u, 0xfa000000u, 0xbf8cc07fu,
++    0x7e000304u, 0x7e020305u, 0x7e04020au, 0x7e0602ffu, 0x12345678u,
++    0x360c0087u, 0x4a0e0d06u, 0x4a0c0d07u, 0x4a0c0b06u, 0x340e0c84u,
++    0xe0781000u, 0x80030007u,
++    0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u,
++    0x060400f3u, 0x10040500u, 0x060404f3u,
++    0x7e060280u, 0x7e0802f2u, 0x7e0a02ffu, 0x44800000u,
++    0xf80000d1u, 0x00000005u, 0xf80008cfu, 0x04030201u,
++    0xbf810000u, 0xbf810000u, 0xbf810000u,
++};
++constexpr std::array<std::uint32_t, 5> PixelCode{
++    0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u,
++};
++
++std::vector<std::uint32_t> Program(bool folded, bool rebased = false) {
++    std::vector<std::uint32_t> code;
++    if (rebased) code.push_back(0x4e10100au);
++    if (folded) code.push_back(0x7e080308u);
++    else code.insert(code.end(), MaskedAdd.begin(), MaskedAdd.end());
++    code.insert(code.end(), Body.begin(), Body.end());
++    return code;
++}
++
++void CheckEncoding() {
++    const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(Program(false));
++    const auto& add = decoded.instructions.at(0);
++    Require(add.op == ShaderRecompiler::RdnaOpcode::VAddNcU32 && add.destination.reg == 4u &&
++        add.source0.kind == ShaderRecompiler::RdnaOperandKind::VectorRegister && add.source0.reg == 8u && add.source0.sdwaSel == 6u &&
++        add.source1.kind == ShaderRecompiler::RdnaOperandKind::ScalarRegister && add.source1.reg == 10u && add.source1.sdwaSel == 4u && !add.source1.sdwaSext,
++        "the probe did not encode v_add_nc_u32_sdwa v4, v8, s10 src1_sel:WORD_0");
++    const auto& overwrite = decoded.instructions.at(1);
++    Require(overwrite.op == ShaderRecompiler::RdnaOpcode::SLoadDwordx16 && overwrite.destination.reg == 8u && overwrite.source0.reg == 8u,
++        "the probe did not overwrite s10 in an immediate s_load_dwordx16 s[8:23], s[8:9], 0");
++    Require(decoded.instructions.at(11).op == ShaderRecompiler::RdnaOpcode::VLshlrevB32,
++        "the probe did not convert its output record index to a byte offset");
++    const auto rebased = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(Program(false, true));
++    Require(rebased.instructions.front().op == ShaderRecompiler::RdnaOpcode::VSubrevNcU32 &&
++        rebased.instructions.front().destination.reg == 8u && rebased.instructions.front().source0.reg == 10u && rebased.instructions.front().source1.reg == 8u,
++        "the arithmetic prototype did not subtract the supplied base from the initial instance index");
++}
++
++bool ReadTable(void*, std::uint64_t address, std::uint32_t* value) {
++    const auto begin = reinterpret_cast<std::uintptr_t>(Table.data());
++    if (address < begin || address - begin >= sizeof(Table) || (address - begin) % sizeof(std::uint32_t) != 0u) return false;
++    *value = Table[(address - begin) / sizeof(std::uint32_t)];
++    return true;
++}
++
++AgcDriver::Graphics::State State(std::uint32_t wave) {
++    AgcDriver::Graphics::State state{};
++    state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, wave, wave, std::nullopt, std::nullopt};
++    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Extent, Extent}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
++    state.colors = {state.color};
++    state.hasColorTarget = true;
++    state.renderExtent = {Extent, Extent};
++    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
++    state.viewport = {0.0f, static_cast<float>(Extent), static_cast<float>(Extent), -static_cast<float>(Extent), 0.0f, 1.0f};
++    state.scissor = {{0, 0}, {Extent, Extent}};
++    state.cullMode = VK_CULL_MODE_NONE;
++    state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
++    state.blend.colorWriteMask = 15u;
++    state.blends = {state.blend};
++    return state;
++}
++
++std::array<std::uint32_t, Output.size()> Draw(AgcDriver::VulkanDevice& device, std::uint32_t wave, std::uint32_t base, std::uint32_t instances, bool folded, bool rebased = false, bool dynamic = false) {
++    const auto tableAddress = reinterpret_cast<std::uintptr_t>(Table.data());
++    const auto outputAddress = reinterpret_cast<std::uintptr_t>(Output.data());
++    Table.fill(0u);
++    Table[2] = Marker;
++    const std::array<std::uint32_t, 4> descriptor{
++        static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), sizeof(Output), 0x31016facu,
++    };
++    std::copy(descriptor.begin(), descriptor.end(), Table.begin() + 4);
++    const std::array<std::uint32_t, 4> words{
++        static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u), dynamic ? 0xbadc0ffeu : folded ? 0u : base, 0u,
++    };
++    const auto code = Program(folded, rebased);
++    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{tableAddress, std::as_bytes(std::span(Table))}}};
++    ShaderRecompiler::RecompileRequest request{
++        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}},
++        {wave, 8u, words, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, memory},
++        device.Target(), {0u, 0u, 0u, 96u},
++    };
++    if (dynamic) {
++        request.graphics = ShaderRecompiler::GraphicsCompileContext{.firstUserSgpr = 8u, .instanceInputSgpr = 10};
++        auto ordinary = request;
++        ordinary.graphics->instanceInputSgpr = -1;
++        auto routed = request;
++        routed.graphics->instanceInputSgpr = 11;
++        auto noGraphics = ordinary;
++        noGraphics.graphics.reset();
++        for (const auto build : {&ShaderRecompiler::RecompileCacheKey::Build, &ShaderRecompiler::RecompileCacheKey::BuildInterface}) {
++            std::vector<std::uint64_t> key, normalKey, routedKey, noGraphicsKey;
++            build(request, key);
++            build(ordinary, normalKey);
++            build(routed, routedKey);
++            build(noGraphics, noGraphicsKey);
++            Require(normalKey == noGraphicsKey && key.size() == normalKey.size() + 1u, "ordinary instance mode added a shader cache key word");
++            Require(key != normalKey && key != routedKey, "the dynamic instance input and SGPR route did not enter the shader cache key");
++        }
++        Require(ShaderRecompiler::RecompileCacheKey::ContextHash(ordinary) == ShaderRecompiler::RecompileCacheKey::ContextHash(noGraphics), "ordinary instance mode changed the source memo key");
++        Require(ShaderRecompiler::RecompileCacheKey::ContextHash(request) != ShaderRecompiler::RecompileCacheKey::ContextHash(ordinary) &&
++            ShaderRecompiler::RecompileCacheKey::ContextHash(request) != ShaderRecompiler::RecompileCacheKey::ContextHash(routed), "the source memo did not distinguish the instance input route");
++        const ShaderRecompiler::RequestSerializer serializer;
++        const auto replay = serializer.Deserialize(serializer.Serialize(request));
++        Require(replay.request.graphics && replay.request.graphics->instanceInputSgpr == 10, "the replay lost its dynamic instance input");
++        if (wave == 32u && base == 0u) {
++            const auto refuse = [](const ShaderRecompiler::RecompileRequest& invalid) {
++                bool refused = false;
++                try {
++                    static_cast<void>(ShaderRecompiler::Recompile(invalid));
++                } catch (const std::runtime_error& error) {
++                    refused = std::string(error.what()).find("dynamic instance input") != std::string::npos;
++                }
++                Require(refused, "an unsupported dynamic instance input request was accepted");
++            };
++            for (const auto invalidSgpr : {-2, 7, 12, 128}) {
++                auto invalid = request;
++                invalid.graphics->instanceInputSgpr = invalidSgpr;
++                refuse(invalid);
++            }
++            auto capabilities = std::vector<std::uint32_t>(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
++            std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityDrawParameters));
++            auto unsupported = request;
++            unsupported.target.supportedCapabilities = capabilities;
++            refuse(unsupported);
++        }
++    }
++    const ShaderRecompiler::SrtRuntime runtime{words, 0u, ReadTable};
++    const auto capture = ShaderRecompiler::CaptureResources(request, runtime);
++    const auto walked = capture->userDataUse.asBase | capture->userDataUse.asValue;
++    Require((walked & 3u) == 3u && (walked & 4u) == 0u,
++        "the resource walk did not distinguish the table pointer from the numeric instance word: asBase=" + std::to_string(capture->userDataUse.asBase) + " asValue=" + std::to_string(capture->userDataUse.asValue));
++    if (!folded && !rebased && !dynamic) {
++        auto pointerCode = code;
++        pointerCode[2] = 0xf4100205u;
++        const std::array<std::uint32_t, 4> pointerWords{0u, 0u, words[0], words[1]};
++        auto pointerRequest = request;
++        pointerRequest.shader.code = pointerCode;
++        pointerRequest.context.userData = pointerWords;
++        const ShaderRecompiler::SrtRuntime pointerRuntime{pointerWords, 0u, ReadTable};
++        const auto pointerCapture = ShaderRecompiler::CaptureResources(pointerRequest, pointerRuntime);
++        const auto pointerWalked = pointerCapture->userDataUse.asBase | pointerCapture->userDataUse.asValue;
++        Require((pointerWalked & 12u) == 12u, "the positive control did not mark s10:s11 consumed as a resource pointer");
++    }
++    const auto vertex = *ShaderRecompiler::Recompile(request, *capture);
++    Require(vertex.instanceOffsetSgpr == -1 && vertex.vertexAttributes.empty(), "the probe unexpectedly used fixed-function instance fetching");
++    const auto pushBytes = static_cast<std::uint32_t>(vertex.pushConstants.size());
++    ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
++    pixelInfo.wave32 = wave == 32u;
++    pixelInfo.targetOutputMode[0] = 9u;
++    pixelInfo.targetExportMapping.fill(0xe4u);
++    const auto pixel = ShaderRecompiler::Recompile({
++        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0u, {}},
++        {wave, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}},
++        device.Target(), PixelPushLayout(pushBytes, device.Target()),
++    });
++    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
++        {ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(pushBytes, device.Target())},
++    }};
++    AgcDriver::Pm4::DrawParameters draw{0u, Vertices, 0u, instances, 0u, false};
++    draw.firstInstance = folded || rebased || dynamic ? base : 0u;
++    Output.fill(Sentinel);
++    device.Draw(State(wave), draw, shaders);
++    device.WaitIdle();
++    return Output;
++}
++
++void CheckRefusals(const std::shared_ptr<AgcDriver::VulkanDevice>& device) {
++    AgcDriver::DriverDetail::DrawProgram program{};
++    program.firstUserSgpr = 8u;
++    program.userData.resize(4u);
++    auto state = State(64u);
++    AgcDriver::Pm4::DrawParameters draw{};
++    draw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{};
++    draw.indirect->count = 1u;
++    draw.indirect->startInstanceSgpr = 10;
++    ShaderRecompiler::RecompileResult compiled{};
++    const auto refused = [&](const AgcDriver::Graphics::State& graphics, const ShaderRecompiler::RecompileResult& result, std::int32_t sgpr) {
++        auto candidate = draw;
++        Require(AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(result, graphics, program, device, candidate, false, sgpr).has_value(), "an incompatible dynamic instance path was accepted");
++    };
++    refused(state, compiled, 11);
++    auto instanced = compiled;
++    instanced.vertexAttributes.emplace_back().fetchIndex = 1u;
++    refused(state, instanced, 10);
++    auto folded = compiled;
++    folded.instanceOffsetSgpr = 10;
++    refused(state, folded, 10);
++    for (const auto path : {AgcDriver::Graphics::ShaderPath::Geometry, AgcDriver::Graphics::ShaderPath::Tessellation}) {
++        auto graphics = state;
++        graphics.stages.path = path;
++        refused(graphics, compiled, 10);
++    }
++    auto rectangle = state;
++    rectangle.rectList = true;
++    refused(rectangle, compiled, 10);
++    draw.indirect->baseVertexSgpr = 10;
++    refused(state, compiled, 10);
++}
++
++void Run(AgcDriver::VulkanDevice& device) {
++    CheckEncoding();
++    constexpr std::array<std::uint32_t, 10> bases{
++        0u, 1u, 65534u, 65535u, 65536u, 65537u, 917966u, 0x80000000u, 0xfffffff0u, 0xffffffffu,
++    };
++    std::uint32_t controls = 0u;
++    std::uint32_t counterexamples = 0u;
++    for (const auto wave : {32u, 64u}) {
++        for (const auto base : bases) {
++            const auto instances = base == 0xffffffffu ? 1u : 3u;
++            std::array<std::uint32_t, Output.size()> expected{};
++            expected.fill(Sentinel);
++            for (std::uint32_t instance = 0u; instance < instances; ++instance) {
++                const auto index = instance + (base & 0xffffu);
++                for (std::uint32_t vertex = 0u; vertex < Vertices; ++vertex) {
++                    const auto offset = ((index & (Rows - 1u)) * Vertices + vertex) * Components;
++                    expected[offset] = index;
++                    expected[offset + 1u] = vertex;
++                    expected[offset + 2u] = Marker;
++                    expected[offset + 3u] = 0x12345678u;
++                }
++            }
++            const auto reference = Draw(device, wave, base, instances, false);
++            for (std::size_t word = 0; word < expected.size(); ++word) {
++                Require(reference[word] == expected[word], "wave" + std::to_string(wave) + " base " + std::to_string(base) +
++                    " reference word " + std::to_string(word) + " is " + std::to_string(reference[word]) + ", expected " + std::to_string(expected[word]));
++            }
++            const auto rebased = Draw(device, wave, base, instances, false, true);
++            Require(rebased == reference, "subtracting the supplied base did not preserve the masked arithmetic and SGPR overwrite");
++            const auto dynamic = Draw(device, wave, base, instances, false, false, true);
++            Require(dynamic == reference, "the BaseInstance input did not preserve masked arithmetic and the subsequent SGPR overwrite");
++            const auto folded = Draw(device, wave, base, instances, true);
++            const bool same = folded == reference;
++            Require(same == (base < 65536u), "the whole-word folding counterexample did not distinguish the low-16-bit boundary");
++            if (same) ++controls;
++            else ++counterexamples;
++            std::printf("wave%u base=%u instances=%u reference=exact whole-word-fold=%s supplied-base-rebase=exact BaseInstance-input=exact\n", wave, base, instances, same ? "equal" : "WRONG");
++        }
++    }
++    std::printf("masked instance probe: %u below-boundary controls, %u whole-word-fold counterexamples\n", controls, counterexamples);
++}
++
++}
++
++int main() {
++    try {
++        const std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
++        if (!device) return VulkanTestSkipped;
++        CheckRefusals(device);
++        Run(*device);
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << error.what() << '\n';
++        return 1;
++    }
++}
+diff --git a/core/libs/prx/libSceAgcDriver/tests/execution/PipelinedIndirectDraw.cpp b/core/libs/prx/libSceAgcDriver/tests/execution/PipelinedIndirectDraw.cpp
+index 93abe602a5..e656d0dab2 100644
+--- a/core/libs/prx/libSceAgcDriver/tests/execution/PipelinedIndirectDraw.cpp
++++ b/core/libs/prx/libSceAgcDriver/tests/execution/PipelinedIndirectDraw.cpp
+@@ -252,8 +252,10 @@ void IndirectDrawWaitsForItsQueuedRecordWrite() {
+ int main() {
+ #ifdef _WIN32
+     _putenv_s("APS5_PIPELINED_DRAWS", "1");
++    _putenv_s("APS5_NO_INDIRECT_INPUT_ROUTES", "1");
+ #else
+     setenv("APS5_PIPELINED_DRAWS", "1", 1);
++    setenv("APS5_NO_INDIRECT_INPUT_ROUTES", "1", 1);
+ #endif
+     try {
+         {
+diff --git a/core/shader/recompiler/CacheKey.hpp b/core/shader/recompiler/CacheKey.hpp
+index 488666299c..de1feaf09d 100644
+--- a/core/shader/recompiler/CacheKey.hpp
++++ b/core/shader/recompiler/CacheKey.hpp
+@@ -59,6 +59,10 @@ public:
+         appendFallbacks(key, request);
+         appendMesh(key, request);
+         appendTessellation(key, request);
++        if (request.graphics && (request.graphics->instanceInputSgpr != -1 || request.graphics->vertexInputSgpr != -1)) {
++            append(key, request.graphics->instanceInputSgpr);
++            if (request.graphics->vertexInputSgpr != -1) append(key, request.graphics->vertexInputSgpr);
++        }
+         std::uint64_t hash = 0xcbf29ce484222325ull;
+         for (const auto value : key) {
+             hash ^= value;
+@@ -93,6 +97,10 @@ private:
+         appendFallbacks(key, request);
+         appendMesh(key, request);
+         appendTessellation(key, request);
++        if (request.graphics && (request.graphics->instanceInputSgpr != -1 || request.graphics->vertexInputSgpr != -1)) {
++            append(key, request.graphics->instanceInputSgpr);
++            if (request.graphics->vertexInputSgpr != -1) append(key, request.graphics->vertexInputSgpr);
++        }
+         append(key, request.target);
+         append(key, DebugProbeActive());
+         append(key, RayTracingStrict());
+diff --git a/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp b/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp
+index 1dbf48e735..ba73e6ab04 100644
+--- a/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp
++++ b/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp
+@@ -861,7 +861,9 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const
+     std::string buffer;
+     Writer writer(buffer);
+     writer.WriteU32(0x41505335u);
+-    writer.WriteU32(49u);
++    const bool vertexInput = request.graphics && request.graphics->vertexInputSgpr != -1;
++    const bool instanceInput = vertexInput || (request.graphics && request.graphics->instanceInputSgpr != -1);
++    writer.WriteU32(vertexInput ? 51u : instanceInput ? 50u : 49u);
+     writeShaderBinary(writer, request.shader);
+     writeGuestContext(writer, request.context);
+     writeSpirvTarget(writer, request.target);
+@@ -903,6 +905,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const
+     writer.WriteBool(request.target.largePixelFunctionLdsBuffer);
+     writer.WriteU32(request.target.pixelFunctionStorageDwords);
+     writer.WriteBool(request.target.fragmentBarycentricBuiltins);
++    if (instanceInput) writer.WriteI32(request.graphics->instanceInputSgpr);
++    if (vertexInput) writer.WriteI32(request.graphics->vertexInputSgpr);
+     return base64Encode(buffer);
+ }
+ 
+@@ -911,7 +915,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const
+     Reader reader(decoded);
+     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
+     const auto version = reader.ReadU32();
+-    if (version < 1u || version > 49u) throw std::runtime_error("unsupported recompile request serialization version");
++    if (version < 1u || version > 51u) throw std::runtime_error("unsupported recompile request serialization version");
+     DeserializedRequest result{};
+     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
+     result.request.context = readGuestContext(reader, result, version);
+@@ -971,6 +975,11 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const
+         result.request.target.pixelFunctionStorageDwords = reader.ReadU32();
+     }
+     if (version >= 48u) result.request.target.fragmentBarycentricBuiltins = reader.ReadBool();
++    if (version >= 50u) {
++        if (!result.request.graphics) throw std::runtime_error("RequestSerializer: dynamic instance input requires a graphics context");
++        result.request.graphics->instanceInputSgpr = reader.ReadI32();
++    }
++    if (version >= 51u) result.request.graphics->vertexInputSgpr = reader.ReadI32();
+     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
+     return result;
+ }
+diff --git a/core/shader/recompiler/IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/StageIO.hpp b/core/shader/recompiler/IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/StageIO.hpp
+index 809e254349..7ad5129040 100644
+--- a/core/shader/recompiler/IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/StageIO.hpp
++++ b/core/shader/recompiler/IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/StageIO.hpp
+@@ -56,6 +56,7 @@ enum class StageInputKind {
+     BaryCoordSmoothSample,
+     BaryCoordNoPerspectiveSample,
+     SampleMask,
++    BaseVertex,
+ };
+ 
+ constexpr StageInputKind BarycentricInputOf(StageInputKind kind) {
+diff --git a/core/shader/recompiler/Optimization/src/ShaderInfoCollector.cpp b/core/shader/recompiler/Optimization/src/ShaderInfoCollector.cpp
+index 272d201362..b6db71e6be 100644
+--- a/core/shader/recompiler/Optimization/src/ShaderInfoCollector.cpp
++++ b/core/shader/recompiler/Optimization/src/ShaderInfoCollector.cpp
+@@ -183,6 +183,7 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
+                         case StageInputKind::VertexIndex:
+                         case StageInputKind::InstanceIndex:
+                         case StageInputKind::BaseInstance:
++                        case StageInputKind::BaseVertex:
+                         case StageInputKind::InvocationId:
+                         case StageInputKind::PrimitiveId:
+                         case StageInputKind::FrontFacing:
+@@ -396,6 +397,9 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
+                 case StageInputKind::BaseInstance:
+                     AddInput(info, kind, 0, 1, "gl_BaseInstance");
+                     break;
++                case StageInputKind::BaseVertex:
++                    AddInput(info, kind, 0, 1, "gl_BaseVertex");
++                    break;
+                 case StageInputKind::InvocationId:
+                     AddInput(info, kind, 0, 1, "gl_InvocationID");
+                     break;
+diff --git a/core/shader/recompiler/Recompiler.cpp b/core/shader/recompiler/Recompiler.cpp
+index abc5ff780c..b9f34e9e66 100644
+--- a/core/shader/recompiler/Recompiler.cpp
++++ b/core/shader/recompiler/Recompiler.cpp
+@@ -258,6 +258,14 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
+     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
+     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
+     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
++    translateOptions.instanceInputSgpr = request.graphics ? request.graphics->instanceInputSgpr : -1;
++    if (translateOptions.instanceInputSgpr != -1 && (request.shader.stage != ShaderStage::Vertex || request.graphics->mesh || request.graphics->tessellation || !supports(spv::CapabilityDrawParameters))) {
++        throw std::runtime_error("dynamic instance input requires a vertex draw with shader draw parameters");
++    }
++    translateOptions.vertexInputSgpr = request.graphics ? request.graphics->vertexInputSgpr : -1;
++    if (translateOptions.vertexInputSgpr != -1 && (request.shader.stage != ShaderStage::Vertex || request.graphics->mesh || request.graphics->tessellation || !supports(spv::CapabilityDrawParameters))) {
++        throw std::runtime_error("dynamic vertex input requires a vertex draw with shader draw parameters");
++    }
+     translateOptions.floatMode = request.context.floatMode;
+     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
+     translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
+diff --git a/core/shader/recompiler/Recompiler.hpp b/core/shader/recompiler/Recompiler.hpp
+index d7b1938cce..8e139e140b 100644
+--- a/core/shader/recompiler/Recompiler.hpp
++++ b/core/shader/recompiler/Recompiler.hpp
+@@ -448,6 +448,8 @@ struct GraphicsCompileContext {
+     std::optional<TessellationConfiguration> tessellation;
+     GraphicsDrawParameters draw;
+     std::optional<MeshBarycentricLayout> meshBarycentrics;
++    std::int32_t instanceInputSgpr = -1;
++    std::int32_t vertexInputSgpr = -1;
+ };
+ 
+ struct RecompileRequest {
+diff --git a/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvEmitterHelpers.cpp b/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvEmitterHelpers.cpp
+index 0fbd448816..97ec06231e 100644
+--- a/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvEmitterHelpers.cpp
++++ b/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvEmitterHelpers.cpp
+@@ -87,6 +87,7 @@ std::uint32_t BuiltInForInput(StageInputKind kind) {
+     case StageInputKind::TessCoord: return spv::BuiltInTessCoord;
+     case StageInputKind::InstanceIndex: return spv::BuiltInInstanceIndex;
+     case StageInputKind::BaseInstance: return spv::BuiltInBaseInstance;
++    case StageInputKind::BaseVertex: return spv::BuiltInBaseVertex;
+     case StageInputKind::FragCoord: return spv::BuiltInFragCoord;
+     case StageInputKind::FrontFacing: return spv::BuiltInFrontFacing;
+     case StageInputKind::HelperInvocation: return spv::BuiltInHelperInvocation;
+@@ -253,6 +254,7 @@ void DefineInputs(SpirvEmitterState& state) {
+         case StageInputKind::PrimitiveId:
+         case StageInputKind::InstanceIndex:
+         case StageInputKind::BaseInstance:
++        case StageInputKind::BaseVertex:
+         case StageInputKind::Layer:
+         case StageInputKind::SampleId:
+             type = TypeI32(state);
+diff --git a/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvModuleSetup.cpp b/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvModuleSetup.cpp
+index cab4d0b74c..2365b96044 100644
+--- a/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvModuleSetup.cpp
++++ b/core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvModuleSetup.cpp
+@@ -352,7 +352,7 @@ void DefineModule(SpirvEmitterState& state) {
+         state.module.EmitCapability(spv::CapabilityComputeDerivativeGroupLinearKHR);
+         state.module.EmitExtension("SPV_KHR_compute_shader_derivatives");
+     }
+-    if (std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) { return input.kind == StageInputKind::BaseInstance; })) {
++    if (std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) { return input.kind == StageInputKind::BaseInstance || input.kind == StageInputKind::BaseVertex; })) {
+         state.module.EmitCapability(spv::CapabilityDrawParameters);
+     }
+     const bool fragmentBarycentric = StageOf(state) == IrShaderStage::Pixel && std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
+diff --git a/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp b/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
+index 1f7cf2a2bd..c4631b693f 100644
+--- a/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
++++ b/core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
+@@ -243,7 +243,7 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
+         state.module.AddFunction(spv::OpSelect, TypeU32(state), bits, value, ConstantU32(state, 1u), ConstantU32(state, 0u));
+         return bits;
+     }
+-    if (kind == StageInputKind::VertexIndex || kind == StageInputKind::InstanceIndex || kind == StageInputKind::BaseInstance || kind == StageInputKind::InvocationId || kind == StageInputKind::PrimitiveId || kind == StageInputKind::Layer || kind == StageInputKind::SampleId) {
++    if (kind == StageInputKind::VertexIndex || kind == StageInputKind::InstanceIndex || kind == StageInputKind::BaseInstance || kind == StageInputKind::BaseVertex || kind == StageInputKind::InvocationId || kind == StageInputKind::PrimitiveId || kind == StageInputKind::Layer || kind == StageInputKind::SampleId) {
+         const auto value = state.module.AllocateId();
+         const auto bits = state.module.AllocateId();
+         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, variable);
+diff --git a/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp b/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp
+index b72d41b050..93a766b713 100644
+--- a/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp
++++ b/core/shader/recompiler/Translation/include/Translation/InstructionTranslator.hpp
+@@ -42,6 +42,8 @@ struct TranslateOptions {
+     std::optional<ShaderFloatMode> floatMode;
+     ShaderStageInputInfo inputInfo;
+     const EmbeddedFetchPlan* embeddedFetch = nullptr;
++    std::int32_t instanceInputSgpr = -1;
++    std::int32_t vertexInputSgpr = -1;
+ };
+ 
+ class InstructionTranslator {
+diff --git a/core/shader/recompiler/Translation/src/InstructionTranslator.cpp b/core/shader/recompiler/Translation/src/InstructionTranslator.cpp
+index d71a921c64..cc3ef54345 100644
+--- a/core/shader/recompiler/Translation/src/InstructionTranslator.cpp
++++ b/core/shader/recompiler/Translation/src/InstructionTranslator.cpp
+@@ -42,6 +42,26 @@ void validateTranslateOptions(const TranslateOptions& options) {
+     if (options.userDataBaseRegister >= NumScalarRegs || options.userDataCount > NumScalarRegs - options.userDataBaseRegister) {
+         throw std::runtime_error("shader user data exceeds the scalar register bank");
+     }
++    if (options.instanceInputSgpr != -1) {
++        if (options.stage != ShaderStageKind::Vertex || options.gcnLegacyVertexInputs || options.instanceInputSgpr < 0 ||
++            static_cast<std::uint32_t>(options.instanceInputSgpr) < options.userDataBaseRegister ||
++            static_cast<std::uint32_t>(options.instanceInputSgpr) - options.userDataBaseRegister >= options.userDataCount) {
++            throw std::runtime_error("dynamic instance input requires a vertex user SGPR");
++        }
++        if (options.embeddedFetch != nullptr && options.embeddedFetch->instanceOffsetSgpr >= 0) {
++            throw std::runtime_error("dynamic instance input cannot also fold an instance fetch offset");
++        }
++    }
++    if (options.vertexInputSgpr != -1) {
++        if (options.stage != ShaderStageKind::Vertex || options.gcnLegacyVertexInputs || options.vertexInputSgpr < 0 || options.vertexInputSgpr == options.instanceInputSgpr ||
++            static_cast<std::uint32_t>(options.vertexInputSgpr) < options.userDataBaseRegister ||
++            static_cast<std::uint32_t>(options.vertexInputSgpr) - options.userDataBaseRegister >= options.userDataCount) {
++            throw std::runtime_error("dynamic vertex input requires a vertex user SGPR");
++        }
++        if (options.embeddedFetch != nullptr && options.embeddedFetch->vertexOffsetSgpr >= 0) {
++            throw std::runtime_error("dynamic vertex input cannot also fold a vertex fetch offset");
++        }
++    }
+     if (options.waveSize != 32u && options.waveSize != 64u) {
+         throw std::runtime_error("shader translation requires wave32 or wave64, got " + std::to_string(options.waveSize));
+     }
+@@ -183,6 +203,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
+         const auto* fetch = options.embeddedFetch;
+         const std::int32_t folded = fetch == nullptr ? -1 : kind == StageInputKind::VertexIndex ? fetch->vertexOffsetSgpr : fetch->instanceOffsetSgpr;
+         IrValue& index = builtin(kind);
++        if (kind == StageInputKind::InstanceIndex && options.instanceInputSgpr >= 0) return entryIr.ISub(index, builtin(StageInputKind::BaseInstance));
++        if (kind == StageInputKind::VertexIndex && options.vertexInputSgpr >= 0) return entryIr.ISub(index, builtin(StageInputKind::BaseVertex));
+         return folded < 0 ? index : entryIr.ISub(index, entryIr.GetUserData(static_cast<ScalarReg>(folded)));
+     };
+     const auto tessellationBase = [&entryIr](TessellationBaseKind kind) -> IrValue& {
+@@ -195,7 +217,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
+ 
+     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
+         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
+-        IrValue& value = entryIr.GetUserData(reg);
++        const auto sgpr = static_cast<std::int32_t>(RegIndex(reg));
++        IrValue& value = sgpr == options.instanceInputSgpr ? builtin(StageInputKind::BaseInstance) : sgpr == options.vertexInputSgpr ? builtin(StageInputKind::BaseVertex) : entryIr.GetUserData(reg);
+         entryIr.SetScalarReg(reg, value);
+         entryIr.SetScalarMaskTag(reg, entryIr.ConstantBool(false));
+     }
+diff --git a/core/shader/recompiler/tests/RequestSerializerTests.cpp b/core/shader/recompiler/tests/RequestSerializerTests.cpp
+index dc1ca02aae..1817c938c1 100644
+--- a/core/shader/recompiler/tests/RequestSerializerTests.cpp
++++ b/core/shader/recompiler/tests/RequestSerializerTests.cpp
+@@ -598,6 +598,74 @@ int main() {
+         }
+     }
+ 
++    {
++        ShaderRecompiler::RecompileRequest dynamic{};
++        dynamic.shader.stage = ShaderRecompiler::ShaderStage::Vertex;
++        dynamic.graphics = ShaderRecompiler::GraphicsCompileContext{};
++        const auto expectRejected = [&](const std::vector<std::uint8_t>& bytes, std::string_view expected) {
++            bool rejected = false;
++            try {
++                static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
++            } catch (const std::runtime_error& error) {
++                rejected = error.what() == expected;
++            }
++            Require(rejected);
++        };
++        for (const bool barycentric : {false, true}) {
++            dynamic.target.fragmentBarycentricBuiltins = barycentric;
++            const auto ordinary = serializer.Serialize(dynamic);
++            Require(DecodeBase64(ordinary)[4] == 49u);
++            const auto replay48 = serializer.Deserialize(ordinary);
++            Require(replay48.request.graphics->instanceInputSgpr == -1 && replay48.request.target.fragmentBarycentricBuiltins == barycentric);
++            Require(serializer.Serialize(replay48.request) == ordinary);
++            auto legacy47 = DecodeBase64(ordinary);
++            legacy47[4] = 47u;
++            legacy47.pop_back();
++            const auto replay47 = serializer.Deserialize(EncodeBase64(legacy47));
++            Require(replay47.request.graphics->instanceInputSgpr == -1 && !replay47.request.target.fragmentBarycentricBuiltins);
++            for (const auto sgpr : {8, 10, 11, 39}) {
++                dynamic.graphics->instanceInputSgpr = sgpr;
++                const auto encoded = serializer.Serialize(dynamic);
++                const auto bytes = DecodeBase64(encoded);
++                const auto replay49 = serializer.Deserialize(encoded);
++                Require(bytes[4] == 50u && replay49.request.graphics->instanceInputSgpr == sgpr);
++                Require(replay49.request.target.fragmentBarycentricBuiltins == barycentric);
++                Require(serializer.Serialize(replay49.request) == encoded);
++                for (std::size_t missing = 1; missing <= sizeof(std::int32_t); ++missing) {
++                    auto truncated = bytes;
++                    truncated.resize(truncated.size() - missing);
++                    expectRejected(truncated, "RequestSerializer: truncated data");
++                }
++                auto trailing = bytes;
++                trailing.push_back(0u);
++                expectRejected(trailing, "RequestSerializer: unexpected trailing data");
++            }
++            dynamic.graphics->instanceInputSgpr = -1;
++            Require(serializer.Serialize(dynamic) == ordinary);
++            legacy47.insert(legacy47.end(), {8u, 0u, 0u, 0u});
++            expectRejected(legacy47, "RequestSerializer: unexpected trailing data");
++        }
++        for (const auto& [instance, vertex] : {std::pair{-1, 10}, std::pair{11, 10}, std::pair{10, 39}}) {
++            dynamic.graphics->instanceInputSgpr = instance;
++            dynamic.graphics->vertexInputSgpr = vertex;
++            const auto encoded = serializer.Serialize(dynamic);
++            const auto bytes = DecodeBase64(encoded);
++            const auto replay50 = serializer.Deserialize(encoded);
++            Require(bytes[4] == 51u && replay50.request.graphics->instanceInputSgpr == instance && replay50.request.graphics->vertexInputSgpr == vertex);
++            Require(serializer.Serialize(replay50.request) == encoded);
++            auto truncated = bytes;
++            truncated.resize(truncated.size() - sizeof(std::int32_t));
++            expectRejected(truncated, "RequestSerializer: truncated data");
++        }
++        dynamic.graphics->instanceInputSgpr = -1;
++        dynamic.graphics->vertexInputSgpr = -1;
++        ShaderRecompiler::RecompileRequest noGraphics{};
++        auto missingContext = DecodeBase64(serializer.Serialize(noGraphics));
++        missingContext[4] = 50u;
++        missingContext.insert(missingContext.end(), {8u, 0u, 0u, 0u});
++        expectRejected(missingContext, "RequestSerializer: dynamic instance input requires a graphics context");
++    }
++
+     ShaderRecompiler::RecompileRequest request{};
+     for (const bool preserve : {false, true}) {
+         request.target.float16DenormPreserve = preserve;
+@@ -620,7 +688,7 @@ int main() {
+         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
+         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
+         auto future = bytes;
+-        future[4] = 50u;
++        future[4] = 52u;
+         bool futureRejected = false;
+         try {
+             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
+diff --git a/docs/dev/ENVIRONMENT.md b/docs/dev/ENVIRONMENT.md
+index b74ec48890..1b33002987 100644
+--- a/docs/dev/ENVIRONMENT.md
++++ b/docs/dev/ENVIRONMENT.md
+@@ -262,6 +262,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
+ | `APS5_NO_GPL` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | draws without graphics pipeline libraries; the device still enables their extensions, so the driver builds its pipelines as for a default device |
+ | `APS5_NO_GPU_DUMP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | decodes dump frames from the tiled guest buffer on the CPU |
+ | `APS5_NO_GPU_INDIRECT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/IndirectDispatch.cpp` |  | reads indirect dispatch arguments on the CPU instead of letting the GPU count them |
++| `APS5_NO_INDIRECT_INPUT_ROUTES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` |  | keeps an indirect draw whose patched start-instance or base-vertex user word the vertex program reads as a value on the CPU path instead of sourcing it from Vulkan `BaseInstance` / `BaseVertex` |
+ | `APS5_NO_GPU_INDIRECT_DRAW` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | reads indirect draw arguments through the flush hook on the CPU instead of from the GPU |
+ | `APS5_NO_GPU_SAMPLE_DUMPS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | dumps occlusion-counter samples on the CPU instead of through the GPU copy path |
+ | `APS5_NO_GPU_THREAD_DIMENSIONS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/IndirectDispatch.cpp` |  | reads the thread counts of an indirect dispatch with USE_THREAD_DIMENSIONS on the CPU instead of turning them into group counts and a thread limit on the GPU |
+diff --git a/docs/dev/debt/libSceAgcDriver.md b/docs/dev/debt/libSceAgcDriver.md
+index aebec877bb..da19d9837c 100644
+--- a/docs/dev/debt/libSceAgcDriver.md
++++ b/docs/dev/debt/libSceAgcDriver.md
+@@ -77,6 +77,8 @@
+ 
+ ### Functional
+ 
++- [GPU-indirect start-instance and base-vertex inputs](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/IndirectDraw.cpp) keep CPU record resolution for mesh, tessellation, rectangle and legacy GCN paths, fixed-function instanced attributes, ambiguous SGPR routing, and words consumed by resource walking or vertex-input decoding. The numeric vertex variant initializes the patched SGPR from Vulkan `BaseInstance` (start instance) or `BaseVertex` (base vertex) and subtracts that base from the initial guest instance or vertex index, retaining the guest arithmetic and later SGPR writes. A base-vertex input also needs a draw without fixed-function vertex attributes and, when not indexed, a zero `GE_INDX_OFFSET`. This input mapping follows the existing vertex ABI and Vulkan's draw-parameter builtins; equivalence on console hardware is unmeasured.
++
+ - [Written staging window on discrete GPUs](../../../core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp) (libSceAgcDriver) - a written buffer element of a dispatch that is not swept is staged device-local up to 8 MiB on a discrete GPU (`Context::discreteGpu`) and up to 2 MiB otherwise; `APS5_WRITTEN_SHADOW_MAX_KIB` replaces either bound. The 8 MiB figure comes from one title on one NVIDIA Windows system (PPSA09911: a 2.5 and a 3.3 MiB skin-cache output written in place cost 55 ms of GPU time per frame, 1.8 ms of extra staging copies once staged); the point where the two copies of a larger element cost more than its in-place stores, and whether AMD or Linux drivers move it, has not been measured. The window is per element and per use, so a kernel that streams once through an element inside the window pays the copy-in and the copy-back on every dispatch.
+ - [Frame capture](../../../core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp) (libSceAgcDriver) throws on macOS. Section views, aliases of one direct memory block and file views replay as separate private memory, so a store through one alias is not seen through another. Only write-watched memory records CPU stores during the frames: private memory on Windows, where a store through one alias is recorded only at that alias; registered ranges on Linux, including direct memory unless mapped more than once (libkernel leaves those views unwatched, so no store through any of them is recorded). Title image pages are recorded only when changed and holding a shader header or its arrays. Linux omits no-access pages (Windows records them unreadable) and records file mapping pages past the file's end as unreadable. A capture starts only at a frame boundary where the driver idles within 10 s (five tries), and stops when GPU work in flight at a delta waits on a later CPU store.
+ - [Frame replay](../../../core/libs/prx/libSceAgcDriver/tools/FrameReplay.cpp) (libSceAgcDriver) orders the calls of different captured threads only by their start (a call starts once every earlier call has started), so the driver sees a schedule the title could have produced, not necessarily the one it did. CPU stores a title made from threads that never call the driver are known only by the next recorded call, so the replay applies them early or late when a GPU wait needs them and derives a value from the wait's reference when no recorded store satisfies it (`of_them_synthesized`). Pacing compares the number of submissions in flight, not what they hold. Prologue registrations of shaders whose memory the title reused after registering them fail and are counted (`stale_registrations`). The title's image range must be free in the replaying process, so the tool is linked at a high image base on Windows.
