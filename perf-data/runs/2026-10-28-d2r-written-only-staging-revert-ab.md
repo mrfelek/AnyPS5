@@ -9,6 +9,8 @@ Question: does [#7618](https://github.com/boykopovar/AnyPS5/pull/7618) (my merge
 
 ## Result
 
+Summary posted upstream on the Diablo II Resurrected discussion: [comment](https://github.com/boykopovar/AnyPS5/discussions/5146#discussioncomment-19245116).
+
 With the PR, about 20 GB of staging copies go each way per 10 s in both scenes; the revert cuts that to about 0.5-1 GB.
 
 - **Menu: the revert is faster.** Presents 85.5 / 95 -> 109 / 112 per 10 s, GPU 95-104 -> 76-78 ms per frame. The staging classes disappear; the draw class is the same (about 63 ms).
