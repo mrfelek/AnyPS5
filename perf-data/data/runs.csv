@@ -133,3 +133,13 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Hot Wheels Infinite Rush,PPSA22408,title,Windows laptop,6d0139cd33,indirect survey,36.2,,113,,,,,,,runs/2026-10-28-indirect-draw-survey.md
 2026-10-28,Hot Wheels Infinite Rush,PPSA22408,menu,Windows laptop,6d0139cd33,indirect survey,35.6,,109,,,,,,,runs/2026-10-28-indirect-draw-survey.md
 2026-10-28,Hot Wheels Infinite Rush,PPSA22408,garage,Windows laptop,6d0139cd33,indirect survey,10.1,,151,,,,,,,runs/2026-10-28-indirect-draw-survey.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,a1 A (job 12),94.0,107.0,95.4,,,,,,10.0,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 swept shadow cap 64 MiB,d1 D,113.0,89.2,76.2,,,,,,9.9,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,a2 A (job 12),88.5,113.7,100.7,,,,,,9.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 swept shadow cap 64 MiB,d2 D,113.5,88.4,75.5,,,,,,9.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a1 A (job 12),79,127.3,92.8,,,,,,10.8,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 64 MiB,d1 D,61,163.5,129.7,,,,,,10.1,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a2 A (job 12),83,121.5,84.2,,,,,,10.7,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 64 MiB,d2 D,60,168.1,133.1,,,,,,10.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,A3 routes off,95.0,106.3,94.1,,,,,,,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,B3 routes on,100.0,100.8,95.7,,,,,,,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md

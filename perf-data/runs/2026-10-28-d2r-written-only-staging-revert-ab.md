@@ -68,6 +68,30 @@ Town (last 150 s of 180 s):
 | a2 A | 89 (85-91) | 112.4 | 23.9 | 84.1 | draw 49.2, staging-out 12.7, staging-in 10.0, fill 3.1 | 22206 in 3600 (6.17) / 22206 in 2196 (10.11) | 10389 | 77.7 | 26861 | 90 / 923 ms |
 | c2 C | 67.0 (61-67) | 152.8 | 35.6 | 128.5 | draw 49.2, fill 3.2, storage-upload 2.2, fill-clear 0.9 | 572 in 2513 (0.23) / 572 in 1503 (0.38) | 10436 | 86.9 | 23601 | 66.5 / 2534 ms |
 
+## Follow-up: swept shadow capped at 64 MiB (desktop)
+
+Same setup as the 16 MiB cap: A = upstream `cc672fdfc6`; D = A with `DiscreteSweptShadowMax` 256 MiB -> 64 MiB. Order a1 d1 a2 d2, no reruns, no errors, normal town load times (25-65 s), shared-memory peaks 8,871-8,989 MiB.
+
+**Result: the 64 MiB cap behaves like the 16 MiB cap and the full revert.** The menu is faster (88.5-94 -> 113-113.5 presents per 10 s, GPU 95-101 -> 76 ms per frame) and the town clearly slower (79-83 -> 60-61, GPU 84-93 -> 130-133 ms). D still stages the smaller swept elements (about 4.7 GB per 10 s on the menu, 2.5 GB in town), but the 202.5 MiB element from the [trace](#what-is-staged-trace-desktop) is over the cap and no longer staged. **So the PR's town gain comes from staging that one 202.5 MiB swept element; any cap below about 203 MiB loses it.** Ruled out: a size cap at any useful size. **Instead:** keep staging that element where it pays, and make the menu stop needing it (stage only its written part, or skip frames where it is not written).
+
+Menu (+245..+365 s):
+
+| arm | presents/10 s (range) | frame p50 ms | inflight_wait ms | GPU ms/frame | top classes ms/frame | staging in / back per 10 s | VRAM MiB | SM % | app.elf CPU ms/10 s | hooksync |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a1 A | 94.0 (92-94) | 107.0 | 34.7 | 95.4 | draw 62.4, staging-out 13.1, staging-in 9.9, fill 3.3 | 23547 MiB in 906 (26.00) / 23547 in 906 (26.00) | 10004 | 92.6 | 18204 | 141 / 3586 ms |
+| d1 D | 113.0 (106-114) | 89.2 | 34.7 | 76.2 | draw 63.0, fill 3.3, storage-upload 2.2, staging-in 1.7, staging-out 1.7 | 4603 in 955 (4.82) / 4603 in 955 (4.82) | 9857 | 90.5 | 23852 | 113 / 2059 ms |
+| a2 A | 88.5 (88-95) | 113.7 | 38.0 | 100.7 | draw 63.3, staging-out 13.8, staging-in 11.0, fill 4.1 | 22848 in 879 (26.00) / 22848 in 879 (26.00) | 9529 | 94.8 | 19332 | 132.5 / 3738 ms |
+| d2 D | 113.5 (108-114) | 88.4 | 34.3 | 75.5 | draw 62.5, fill 3.2, storage-upload 2.2, staging-in 1.6, staging-out 1.6 | 4716 in 980 (4.81) / 4716 in 980 (4.81) | 9486 | 89.9 | 22068 | 113.5 / 2060 ms |
+
+Town (last 150 s of 180 s):
+
+| arm | presents/10 s (range) | frame p50 ms | inflight_wait ms | GPU ms/frame | top classes ms/frame | staging in / back per 10 s | VRAM MiB | SM % | app.elf CPU ms/10 s | hooksync |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a1 A | 79 (76-81) | 127.3 | 27.6 | 92.8 | draw 52.0, staging-out 15.1, staging-in 11.1, fill 3.9 | 19727 in 3198 (6.17) / 19727 in 1978 (9.97) | 10765 | 79.0 | 26300 | 79 / 1024 ms |
+| d1 D | 61 (59-69) | 163.5 | 26.1 | 129.7 | draw 52.4, fill 3.7, storage-upload 2.4, staging-out 1.9 | 2574 in 2460 (1.05) / 2574 in 1497 (1.72) | 10112 | 83.2 | 21671 | 61 / 2883 ms |
+| a2 A | 83 (79-84) | 121.5 | 22.0 | 84.2 | draw 49.5, staging-out 12.5, staging-in 9.9, fill 3.2 | 20477 in 3319 (6.17) / 20477 in 2053 (9.97) | 10702 | 72.7 | 24945 | 83 / 861 ms |
+| d2 D | 60 (58-61) | 168.1 | 25.9 | 133.1 | draw 51.9, fill 3.6, storage-upload 2.4, staging-out 1.9 | 2458 in 2347 (1.05) / 2458 in 1429 (1.72) | 10484 | 83.4 | 19357 | 60 / 3125 ms |
+
 ## What is staged: trace (desktop)
 
 Question: what exactly does the PR copy about 20 GB of per 10 s?
