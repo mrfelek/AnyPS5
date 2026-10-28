@@ -41,8 +41,36 @@ Pipelined 47.0 us per commit (86,671 commits); 74,057 draws per 10 s recorded at
 - The "argument reads" (5,515 ms per 10 s in A1) come only from the empty-indirect skip path: 1,067 indirect draws per 10 s whose arguments are read (draw count and records) to find out they draw nothing, about 5.2 ms each. No real indirect draws ran in this scene.
 - Caveat: every emulator thread has the same name, so the sampler cannot separate the committer from queue worker 0. Naming the threads would allow that split.
 
+## Why template builds are not kept (2026-10-28)
+
+Follow-up on "resource cache entries rebuilt under the same key". Build: upstream `e4bb5fc125` + [draw-set-reuse-reuse-reasons.diff](../../research/patches/draw-set-reuse-reuse-reasons.diff) (the same split timers plus counters that say why each build could or could not be kept). One run, character select, menu at 36 s, 30 s settle + 180 s counted, audio muted. No validation error, device loss or terminate.
+
+- **Main reason: "texture refreshed per use".** The cumulative counters read 533,656 -> 562,506 builds blocked because a texture is refreshed on every use (about 29,000 per 10 s), against 49,104 -> 50,932 reusable builds. Other reasons are near zero (copied writes 21, no direct regions 37).
+- The resource cache still shows almost all misses with the same key as an existing entry (264,693 -> 278,499 cumulative), about 29,000 misses per 10 s against about 38,000 hits.
+- **Caveat: this counter build is slower than the earlier baseline in every window**, so it likely adds work of its own: vertex phase 2.1-2.5 s per 10 s (about 0.25 before), recorded draw 75-86 us (43), upload 417-464 ms (about 92), committer 76-79 us per commit (about 46), 50 presents per 10 s (54), frame p50 196 ms. GPU busy per present is unchanged at 183.9 ms. Use it for the reasons, not for speed.
+
+**Way to go:** find out why those textures count as refreshed on every use and whether an unchanged texture can keep its build; that is what blocks reuse in this menu.
+
+Last two 10 s windows, verbatim:
+
+```
+Window 1:
+[draws] 67994 draws over 10 s (67994 recorded avg 79 us, of them 1188 with completion; 0 recorded then waited avg 0 us; 0 synchronous avg 0 us; render passes 5345 begun, 62649 draws continued one; waited or synchronous because:): validate=48.9ms vertex=2310.4ms setup=38.4ms readTarget=108.8ms (93089 resident lookups, 0 of them >= 1 ms = 0.0; target lookups: full-scissor 93089 / partial 0 / pages walked 2434560 / 102511 us) prepare=86.3ms lookup=354.3ms resources=1572.0ms (bindings 627.7, upload 417.2, descriptors 185.1, other 341.0 of which 0.0 in 0 address-based builds) pipeline=144.5ms record=571.0ms keep=116.0ms; per kind (avg us, count): recipe hit 0 (0) template hit 47 (37447) build 117 (30547) BDA 0 (0); longest draw 110.9 ms, longest phase of any draw: vertex 89.9 lookup 0.5 resources 21.9 record 0.5; hook waits inside draws 0.0 ms (max 0.0; the draws' own syncs, 0.0 ms, not counted); indirect: gpu-side 0 (0 rewritten), cpu-side 0 (), empty skipped before their stages 957, argument reads 3290.5 ms; skipped packets: nothing to draw 0 in 0.0 ms prechecked 0 in 0.0 ms thrown 0 in 0.0 ms; recipe hits 0, misses by reason: not recordable 0 target gone 0 template gone 0 objects gone 0 proof 0
+[rescache] draws: 37447 hits, 29359 misses, 259 invalidated, 1188 uncacheable; validation memo 67994 hits / 0 misses (which key words the misses differ in: the miss churn line)
+[tmp-reuse] builds (cumulative) by outcome: copied writes 21, lease 0, BDA 0, multisample sources 0, loop guard 0, texture refreshed per use 533656, data over refresh size 0, no direct regions 37, region without serial 0, reusable 49104
+[rescache] miss churn (dispatch), first differing word by role: GuestBuffers 25 (V# word 25/0/0/0) GuestImages 14818 (T# word 12733/0/0/184/1901/0/0/0); layout 65, draw target/index 0, same key 23 (not inserted or evicted), first seen 42
+[rescache] miss churn (draws), first differing word by role: GuestImages 5 (T# word 1/0/0/4/0/0/0/0); layout 4, draw target/index 160, same key 264693 (not inserted or evicted), first seen 91
+
+Window 2:
+[draws] 68082 draws over 10 s (68082 recorded avg 82 us, of them 1188 with completion; 0 recorded then waited avg 0 us; 0 synchronous avg 0 us; render passes 5291 begun, 62791 draws continued one; waited or synchronous because:): validate=48.9ms vertex=2520.2ms setup=39.0ms readTarget=109.4ms (92537 resident lookups, 0 of them >= 1 ms = 0.0; target lookups: full-scissor 92537 / partial 0 / pages walked 2421984 / 103031 us) prepare=87.4ms lookup=352.1ms resources=1599.9ms (bindings 616.6, upload 464.4, descriptors 181.3, other 336.7 of which 0.0 in 0 address-based builds) pipeline=144.9ms record=574.7ms keep=116.4ms; per kind (avg us, count): recipe hit 0 (0) template hit 51 (38090) build 121 (29992) BDA 0 (0); longest draw 119.9 ms, longest phase of any draw: vertex 90.2 resources 45.0 record 0.5; hook waits inside draws 0.0 ms (max 0.0; the draws' own syncs, 0.0 ms, not counted); indirect: gpu-side 0 (0 rewritten), cpu-side 0 (), empty skipped before their stages 1007, argument reads 3036.7 ms; skipped packets: nothing to draw 0 in 0.0 ms prechecked 0 in 0.0 ms thrown 0 in 0.0 ms; recipe hits 0, misses by reason: not recordable 0 target gone 0 template gone 0 objects gone 0 proof 0
+[rescache] draws: 38090 hits, 28804 misses, 286 invalidated, 1188 uncacheable; validation memo 68082 hits / 0 misses (which key words the misses differ in: the miss churn line)
+[tmp-reuse] builds (cumulative) by outcome: copied writes 21, lease 0, BDA 0, multisample sources 0, loop guard 0, texture refreshed per use 562506, data over refresh size 0, no direct regions 37, region without serial 0, reusable 50932
+[rescache] miss churn (dispatch), first differing word by role: GuestBuffers 25 (V# word 25/0/0/0) GuestImages 14916 (T# word 12733/0/0/184/1999/0/0/0); layout 65, draw target/index 0, same key 23 (not inserted or evicted), first seen 42
+[rescache] miss churn (draws), first differing word by role: GuestImages 5 (T# word 1/0/0/4/0/0/0/0); layout 4, draw target/index 160, same key 278499 (not inserted or evicted), first seen 91
+```
+
 ## Ruled out, and what to do instead
 
-Descriptor set reuse is ruled out as a way to cut per-draw cost: descriptor updates are about 3% of it. **Instead:** go after the larger pieces: the vectors phase (76.8 of 118.5 us per draw packet), the 5.5 s per 10 s spent reading empty indirect draws before skipping them (about 5.2 ms each), resource cache entries rebuilt under the same key, and the per-draw buffer snapshots (3.3 us). Name the threads so committer time and queue-worker time can be measured separately. On this machine the GPU is close to full as well, so a CPU saving alone would not raise FPS much.
+Descriptor set reuse is ruled out as a way to cut per-draw cost: descriptor updates are about 3% of it. **Instead:** go after the larger pieces: the vectors phase (76.8 of 118.5 us per draw packet), the 5.5 s per 10 s spent reading empty indirect draws before skipping them (about 5.2 ms each), resource cache entries rebuilt under the same key (mostly blocked by "texture refreshed per use", see above), and the per-draw buffer snapshots (3.3 us). Name the threads so committer time and queue-worker time can be measured separately. On this machine the GPU is close to full as well, so a CPU saving alone would not raise FPS much.
 
 AI-assisted. Tested by me on my own machine.
