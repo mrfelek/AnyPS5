@@ -62,4 +62,39 @@ Medians over the 10 s lines in each window:
 
 On this machine the frame is held by draws (about 144 ms per present in the menu, 101 ms in town) and by clears (about 6 ms per present), not by staging (about 2 ms per present in both arms).
 
+## Same A/B on the Windows laptop (RTX A2000 Laptop), partial
+
+- **Date / machine:** 2026-10-28, Windows laptop (RTX A2000 Laptop, NVIDIA 610.60). See [machines.md](../machines.md).
+- **Builds and scenes:** the same A (`cc672fdfc6`) and B (A + revert of `a293f7901b`), built with GCC (WinLibs) and Ninja in Release; same menu window, then town; same settings (audio muted, shader disk cache off). Order A1 B1 A2 B2. The D2R relink on Windows works again on this main (no #7763 error).
+- **A1 is not comparable:** its menu button press did not register, so its window is probably the title screen. The clean comparison is A2 against B1 and B2.
+
+**Result: the menu staging difference reproduces, but it does not decide speed here, and town could not be measured.**
+
+- With the PR, staging costs about 47-70 ms of GPU time per frame and moves 400-580 MB each way per 10 s; with the revert, about 5 ms per frame and 60-90 MB. Same direction as the desktop.
+- But the menu runs at only 0.2-0.4 frames per second on this laptop: storage uploads take about 7-8 s of GPU time per 10 s in every arm, which dwarfs staging, so presents do not separate the arms.
+- **Town:** in all four runs, both arms stayed on the "Loading" screen at about 1 present per 10 s for 4-8 minutes after the save opened, until stopped. No crash, and the same in A and B, so it is not an A/B effect. During that loading (B1 against A2, four windows each): staging 2.5 against 29 ms and 32 against 230 MB per 10 s, storage upload 6.6 against 5.9 s.
+
+Menu window, per 10 s:
+
+| | A1 (title?) | B1 | A2 | B2 |
+|---|---|---|---|---|
+| presents | 1.9 | 3.9 | 2.7 | 2.6 |
+| staging in + out GPU ms | 88.5 | 21.7 | 186.2 | 12.0 |
+| staging ms per frame | ~47 | ~5.6 | ~70 | ~4.7 |
+| staging KiB in (= back) | 403,309 | 89,843 | 576,156 | 59,406 |
+| storage-upload GPU ms | 8149 | 6832 | 7591 | 8100 |
+| storage-writeback GPU ms | 382 | 600 | 429 | 420 |
+| draw GPU ms | 181 | 423 | 295 | 229 |
+| shadow-publish GPU ms | 1.9 | 188 | 78 | 1.1 |
+| storage uploads direct MiB | 44,525 | 52,139 | 53,751 | 53,965 |
+| partial write-backs MiB | 7,441 | 9,488 | 9,321 | 9,066 |
+| draws (avg us) | 1718 (19966) | 4238 (1652) | 2754 (3330) | 2063 (30887) |
+| draw cache lookups / hits | 1719 / 5 | 4241 / 12 | 2756 / 8 | 2064 / 6 |
+| untagged lock wait ms | 642 | 1197 | 813 | 885 |
+| CPU total % | 87 | 93 | 88 | 83 |
+| RAM peak working set / private MB | 9185 / 20229 | 9383 / 20005 | 9368 / 20131 | 9640 / 20540 |
+| VRAM peak MB | 3568 | 3513 | 3646 | 3502 |
+
+**Open on this machine:** the D2R town load crawls on Windows in both arms, so it cannot be a test phase here; and the menu is bound by storage uploads (about 8 s of GPU per 10 s), a bigger problem on this GPU than the staging cost.
+
 AI-assisted. Tested by me on my own machine.
