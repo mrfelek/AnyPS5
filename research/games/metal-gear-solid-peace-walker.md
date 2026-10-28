@@ -9,6 +9,7 @@ Everything I tested on this game, in one place. Upstream discussion: [D#5268](ht
 | main of 21 October (`cecb540a6`) alone | RTX 3080 Ti, Linux | Stops at the 2D MSAA texture read refusal. |
 | `cecb540a6` + [#7803](https://github.com/boykopovar/AnyPS5/pull/7803) (thuanquang, reads 2D MSAA textures as sample 0) + [#8871](https://github.com/boykopovar/AnyPS5/pull/8871) (thuanquang, more 2D MSAA handling, merged) | RTX 3080 Ti, Linux | Reached the beach tutorial at about 60 FPS, no driver errors. |
 | main of 22 October with the same MSAA changes, cold shader cache | RTX A2000, Windows | No logo strips, DLC textures (48 files) load in about 2.1 s with no stall, about 10 minutes of play with no crash and 0 Vulkan errors. FPS rose from 13 (tutorial) to 20 (level 2) to 33 (end). |
+| main of 28 October (`cc672fdfc6`) | RTX A2000, Windows | Stops 8 s after launch with `sceHttp2SetCookieBox not implemented` (an HTTP/2 stub, like the one that stops Hot Wheels since `db57916260`). The way forward is to answer that call instead of throwing. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-28-indirect-draw-survey.md#metal-gear-solid-peace-walker-ppsa05268-main-cc672fdfc6-not-measured) |
 
 ## Setup
 
