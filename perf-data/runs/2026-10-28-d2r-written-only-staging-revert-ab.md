@@ -92,6 +92,30 @@ Town (last 150 s of 180 s):
 | a2 A | 83 (79-84) | 121.5 | 22.0 | 84.2 | draw 49.5, staging-out 12.5, staging-in 9.9, fill 3.2 | 20477 in 3319 (6.17) / 20477 in 2053 (9.97) | 10702 | 72.7 | 24945 | 83 / 861 ms |
 | d2 D | 60 (58-61) | 168.1 | 25.9 | 133.1 | draw 51.9, fill 3.6, storage-upload 2.4, staging-out 1.9 | 2458 in 2347 (1.05) / 2458 in 1429 (1.72) | 10484 | 83.4 | 19357 | 60 / 3125 ms |
 
+## Follow-up: adaptive staging, measure and pick per element (desktop)
+
+Question: since staging the 202.5 MiB element pays in town but costs the menu, can the emulator measure both ways and pick per element?
+
+- **Build:** A = upstream `cc672fdfc6`; B = A + [adaptive-staging.diff](../../research/patches/adaptive-staging.diff) (my prototype, not upstream): for each large swept element it times a few frames staged and a few frames in place, keeps the faster one, and re-checks later. Same scenes and settings as above, staging counters on. One run per arm, both without errors.
+
+| per 10 s | A1 | B1 |
+|---|---|---|
+| menu presents | 93.0 | 112.5 |
+| menu staging in / out | 23.5 GB | 5.7 GB |
+| menu staging GPU ms/frame (in + out) | 10.3 + 12.5 | 2.5 + 2.1 |
+| town presents | 86 | 81 |
+| town staging | 21.4 GB | 19.0 GB |
+| town staging GPU ms/frame (in + out) | 10.1 + 12.4 | 10.9 + 13.8 |
+| committer us per commit (menu / town) | 37.3 / 28.6 | 38.0 / 29.8 |
+
+**Result: the menu gets the revert's speed (93 -> 112.5 presents), but town is 6% slower than plain main (86 -> 81) instead of keeping it.** The decisions themselves are right: 32 decisions, 31 of them for the 202.5 MiB element; on the menu in place wins (78 against 97 ms per frame) and in town staging wins (87-96 against 118-139 ms), for example:
+
+```
+[staging] adaptive: 0x2a86e47f0+0xca80000 GPU 95.8 ms/frame staged, 138.1 in place (12/7 frames) -> staged
+```
+
+The likely cost (not yet tested) is the re-checking: each decision runs 6-8 frames in place again, about 40 ms extra each in town. **Next:** back off the re-check (double the interval each time the answer repeats), then rerun the same pair.
+
 ## What is staged: trace (desktop)
 
 Question: what exactly does the PR copy about 20 GB of per 10 s?
