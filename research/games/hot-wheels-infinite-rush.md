@@ -32,7 +32,7 @@ All runs for this game: [game page](https://github.com/mrfelek/AnyPS5/blob/main/
 | [#8139](https://github.com/boykopovar/AnyPS5/pull/8139) (sparse page permissions, merged) | Tracks permissions per page in sparse ranges. | Heap copies remain (460 vs 447 before). Shadow-publish time halved, hook waits doubled. |
 | [#10655](https://github.com/boykopovar/AnyPS5/pull/10655) (import page hashing off the draw thread) | Moves import page hashing off the draw thread. | Linux race load: no clear difference (A 571/541 s, B 511/541 s, inside noise). The PR targets Windows, so a Windows run is the real test. |
 | [#7844](https://github.com/boykopovar/AnyPS5/pull/7844) (host heap import budget) | Caps how much host memory the import may reserve. | Radeon 780M: no effect; race load stuck at 25% after 15 min in both arms (the cap never applies with a 5658 MiB host heap). |
-| Float denormal flush probe (my fix, [#11297](https://github.com/boykopovar/AnyPS5/pull/11297), open) | Only emulates float denormal handling where the GPU differs. | Windows RTX A2000: draw GPU time -10-16% in every phase, presents +0-1% on the title and +4-11% in the garage, because copies dominate. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 4) |
+| Float denormal flush probe (my fix, [#11297](https://github.com/boykopovar/AnyPS5/pull/11297), merged) | Only emulates float denormal handling where the GPU differs. | Windows RTX A2000: draw GPU time -10-16% in every phase, presents +0-1% on the title and +4-11% in the garage, because copies dominate. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 4) |
 
 ## Ruled out, and what to do instead
 

@@ -132,6 +132,22 @@ Summary on `49d1f9b07e`, Diablo II Resurrected main menu (GPU ms per frame, pres
 
 The two effects add up: the float fix saves about 27 ms of draw time and switching the shadows off about 25 ms of staging, together +43% presents over plain main. The switch turns off every written shadow; a revert of `a293f7901b` alone is booked to isolate that PR.
 
+## Run 8 (2026-10-28): Castlevania loading on main with the fix merged, Windows laptop
+
+Question: does the fix cause the one loading-screen hang seen in Run 4? Build: plain upstream main `e2e27a3ba`, which already contains the fix (and no longer throws on the update check). Windows laptop (RTX A2000, driver 610.60). Castlevania Belmont's Curse (PPSA35399): title, New Game, skip the intro, then 150 s in gameplay; a run counts as hung if there is no gameplay 12 minutes after New Game. The flush log line reads "hardware (0 of 5472 ...)" in every run.
+
+| Run | Gameplay reached | New Game -> gameplay | Gameplay presents/10 s | GPU ms/frame | Draw class ms/10 s | RAM working set / private peak | VRAM peak |
+|---|---|---|---|---|---|---|---|
+| 1 | yes | about 38 s | 32.7 | 99.1 | 3186 | 6994 / 9418 MB | 2285 MB |
+| 2 | yes | about 14 s | 38.3 | 101.2 | 3800 | 7243 / 10003 MB | 2361 MB |
+| 3 | yes | about 16 s | 38.7 | 101.2 | 3845 | 6729 / 9364 MB | 2122 MB |
+| Run 4 A (main `6d0139cd3`, no fix) | yes | about 64 s | 34.4 | 138.6 | 4701 | | |
+| Run 4 B (fix as a patch) | no (loading 9+ min) | never | | | | | |
+
+- **No hang in 3 of 3**, and every plain-main laptop log also passes, so the Run 4 hang looks like a one-off; a rare race cannot be ruled out after 3 runs.
+- GPU time per frame is 99-101 ms against 138.6 ms on the older main without the fix, but these are different main commits, so it is not a clean A/B.
+- Loading and intro phase: 84-92 presents per 10 s, shader disk cache misses 46 / 10.7 / 1.3 from cold to warm, CPU 191-228%.
+
 ## Which bottleneck moved
 
 On the RTX 3080 Ti the menu was fully GPU-bound (98-99% load) with 4K draw passes dominating. Removing the emulated flush cuts draw-pass time by about a third; the GPU drops to about 90% load and CPU per frame becomes a larger share.
