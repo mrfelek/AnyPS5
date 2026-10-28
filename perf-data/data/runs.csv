@@ -72,3 +72,6 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,e4bb5fc125+data-hit-relocation-v6,d2,141.5,71.1,44.0,,,,,,,runs/2026-10-28-sonic-s2-menu-draw-cache-forwarded-patch.md
 2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,49d1f9b07ec7,main (trace),76,132.8,128.4,,,,,,,runs/2026-10-26-d2r-main-menu-11297-trace-evidence.md
 2026-10-26,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,84c51093e3e1 (#11297),change (trace),95,105.0,96.7,,,,,,,runs/2026-10-26-d2r-main-menu-11297-trace-evidence.md
+2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,e2e27a3ba,run 1,32.7,,99.1,,,,,,,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,e2e27a3ba,run 2,38.3,,101.2,,,,,,,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
+2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,e2e27a3ba,run 3,38.7,,101.2,,,,,,,runs/2026-10-24-d2r-main-menu-f32-flush-ab.md
