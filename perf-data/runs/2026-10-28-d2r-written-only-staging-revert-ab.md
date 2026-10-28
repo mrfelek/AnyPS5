@@ -14,7 +14,7 @@ With the PR, about 20 GB of staging copies go each way per 10 s in both scenes; 
 - **Menu: the revert is faster.** Presents 85.5 / 95 -> 109 / 112 per 10 s, GPU 95-104 -> 76-78 ms per frame. The staging classes disappear; the draw class is the same (about 63 ms).
 - **Town: the revert is slower.** Presents 73 / 84 -> 59 / 59 per 10 s, GPU 84-94 -> 145-149 ms per frame. In the reverted town most GPU time falls in no named class (b1: named classes 3,606 ms out of 8,324 ms of GPU time per 10 s), while the named ones stay small (draw about 52, fill 3.6, storage upload 2.4 ms per frame).
 
-So the PR is a trade-off, not a plain regression: it costs the menu about 25 GPU ms per frame and saves the town far more. **Not the way:** reverting it. **Next:** trace the reverted town to name the unclassified GPU time, then keep the town gain while stopping the menu from staging about 26 MiB regions every frame.
+So the PR is a trade-off, not a plain regression: it costs the menu about 25 GPU ms per frame and saves the town far more. **Not the way:** reverting it. **Next:** trace the reverted town to name the unclassified GPU time, then keep the town gain while stopping the menu from staging about 26 MiB regions every frame. (The [staging trace](#what-is-staged-trace-desktop) shows the 26 MiB is only an average: the copies are one 202.5 MiB swept element, re-copied every frame.)
 
 ## Menu (+245..+365 s)
 
@@ -46,7 +46,7 @@ Question: can a smaller cap on the swept shadow keep the town gain while stoppin
 - **Builds:** A = upstream `cc672fdfc6`; C = A with one constant changed in `GuestBufferMemory.cpp`: `DiscreteSweptShadowMax` 256 MiB -> 16 MiB. Not upstream.
 - **Order:** a1 c1 a2 c2, no reruns, no errors, no shared-memory spike (peaks 8,872-9,185 MiB). In a2 the town took about 400 s to load (others 25-65 s); its town window was measured normally.
 
-**Result: the cap behaves like the full revert.** The menu is clearly faster (89-93.5 -> 109-111 presents per 10 s, GPU 95-99 -> 77 ms per frame), and the town is clearly slower (82-89 -> 59-67 presents, GPU 84-90 -> 129-151 ms per frame), with most of the extra town GPU time again outside the named classes. **Ruled out:** capping the swept shadow size; below 26 MiB it switches the feature off in both scenes. **Next:** the same as above, trace the town without staging to name that GPU time, then keep staging where it pays (town) by what is written, not by region size.
+**Result: the cap behaves like the full revert.** The menu is clearly faster (89-93.5 -> 109-111 presents per 10 s, GPU 95-99 -> 77 ms per frame), and the town is clearly slower (82-89 -> 59-67 presents, GPU 84-90 -> 129-151 ms per frame), with most of the extra town GPU time again outside the named classes. **Ruled out:** capping the swept shadow size; at 16 MiB it switches the feature off in both scenes (the element that matters is 202.5 MiB, see the trace below). **Next:** the same as above, trace the town without staging to name that GPU time, then keep staging where it pays (town) by what is written, not by region size.
 
 Menu (+245..+365 s):
 
@@ -65,6 +65,47 @@ Town (last 150 s of 180 s):
 | c1 C | 59 (55-60) | 171.3 | 41.4 | 150.8 | draw 51.8, fill 3.7, storage-upload 2.4, fill-clear 1.2 | 505 in 2220 (0.23) / 505 in 1328 (0.38) | 10367 | 89.5 | 20476 | 59 / 3229 ms |
 | a2 A | 89 (85-91) | 112.4 | 23.9 | 84.1 | draw 49.2, staging-out 12.7, staging-in 10.0, fill 3.1 | 22206 in 3600 (6.17) / 22206 in 2196 (10.11) | 10389 | 77.7 | 26861 | 90 / 923 ms |
 | c2 C | 67.0 (61-67) | 152.8 | 35.6 | 128.5 | draw 49.2, fill 3.2, storage-upload 2.2, fill-clear 0.9 | 572 in 2513 (0.23) / 572 in 1503 (0.38) | 10436 | 86.9 | 23601 | 66.5 / 2534 ms |
+
+## What is staged: trace (desktop)
+
+Question: what exactly does the PR copy about 20 GB of per 10 s?
+
+- **Date / machine:** 2026-10-28, Linux desktop (RTX 3080 Ti), same scenes and settings.
+- **Build:** upstream `cc672fdfc6` + [staging-uses-diag.diff](../../research/patches/staging-uses-diag.diff) (test-only logging: each staged guest range with its size and use count per 10 s). One run; the town took about 400 s to load again, and its window was measured after that.
+- **Speed in this run:** menu 94 presents per 10 s (93-94), GPU 94.9 ms per frame; town 85 (82-89), GPU 86.6 ms per frame. Same as the A arms above.
+
+**Result: both scenes stage the same 9 guest ranges, each copied in about once per present, and one 202.5 MiB swept range is about 83% of all staging.**
+
+| range | size | swept | copies per 10 s, menu / town | MiB per 10 s, menu / town |
+|---|---|---|---|---|
+| 0x2a86b47f0+0xca80000 | 202.50 MiB | yes | 94 / 84 | 19035 / 17010 |
+| 0x258fb6200+0x1fa4000 | 31.64 MiB | yes | 94 / 84 | 2974 / 2658 |
+| 0x2b5138880+0x62b800 | 6.17 MiB | no | 94 / 84 | 580 / 518 |
+| 0x2601212e0+0x140000 | 1.25 MiB | yes | 94 / 84 | 118 / 105 |
+| 0x235dfab00+0x100000 | 1.00 MiB | no | 94 / 84 | 94 / 84 |
+| 0x2b57f97e0+0x10000 | 0.06 MiB | yes | 94 / 84 | 6 / 5 |
+| 0x2b57f57d0+0x4000 | 0.02 MiB | yes | 94 / 84 | 1 / 1 |
+| 0x2b5764100+0x180 | 0.00 MiB | yes | 94 / 84 | 0 / 0 |
+| 0x2b5134800+0x10 | 16 bytes | yes | 94 / 84 | 0 / 0 |
+
+(First 10 s block of each window; totals 22,808 MiB menu, 20,382 MiB town. Every later block has the same 9 ranges at 82-94 copies each.)
+
+- The "26 MiB average region" in the tables above is the total divided by the region count, not a 26 MiB element.
+- The last range is the indirect-draw argument block from the [indirect read work](../../research/indirect-draw-reads.md).
+- Since the same ranges are copied at the same rate in both scenes, the menu/town difference is not in what is staged but in what the copies save the GPU elsewhere in town. **Next:** stage the 202.5 MiB element only where it is written (or only the written part of it each frame), and trace the town without staging to name the GPU time it saves.
+
+## Other title: Sonic Origins Plus, Sonic 2 menu (desktop)
+
+- **Date / machine:** 2026-10-28, Linux desktop (RTX 3080 Ti). Same A (`cc672fdfc6`) and B (A + revert of `a293f7901b`) builds. Sonic 2 menu page reached by +93 s, measured +120..+240 s, staging trace on. Order b1 a2 b2, then a1 (the first a1 stayed on the title screen because input went in during the cold boot; not counted).
+
+**Result: no effect on Sonic.** Staging is about 5 MiB per 10 s in both builds, there are no swept-shadow regions at all (the trace shows one 31.2 KiB range and one 16-byte atomic element), and 0 shadows are refused.
+
+| arm | presents/10 s (range) | frame p50 ms | inflight_wait ms | GPU ms/frame | top classes ms/frame | staging in / back per 10 s | VRAM MiB | SM % | app.elf CPU ms/10 s |
+|---|---|---|---|---|---|---|---|---|---|
+| a1 A | 162 (155-168) | 62.1 | 18.2 | 38.2 | draw 18.7, storage-upload 4.0, copy 3.1, fill 3.0 | 5 MiB in 796 / 5 in 320 | 7454 | 63.3 | 23188 |
+| b1 B | 161 (149-166) | 62.3 | 18.2 | 38.8 | draw 18.8, storage-upload 4.1, copy 3.1, fill 3.0 | 5 in 798 / 5 in 324 | 7775 | 65.6 | 24008 |
+| a2 A | 160 (150-166) | 62.7 | 18.4 | 39.9 | draw 19.0, storage-upload 4.4, copy 3.2, fill 3.2 | 5 in 791 / 5 in 323 | 7686 | 68.9 | 24022 |
+| b2 B | 165 (157-169) | 60.6 | 18.3 | 38.4 | draw 18.8, storage-upload 4.0, copy 3.1, fill 3.0 | 5 in 799 / 5 in 323 | 7525 | 67.3 | 23504 |
 
 ## Same A/B on the AMD mini PC (Radeon 780M)
 

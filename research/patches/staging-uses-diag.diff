@@ -1,0 +1,74 @@
+diff --git a/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp b/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+index 2e917a1ac7b..c18920a20f0 100644
+--- a/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
++++ b/core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+@@ -5130,6 +5130,53 @@ void traceStaged(std::uint64_t begin, std::uint64_t end, bool atomic) {
+     std::fprintf(stderr, "[staging] 0x%llx+0x%llx (%.1f KiB)%s\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), (end - begin) / 1024.0, atomic ? " atomic" : "");
+ }
+ 
++struct StagingUse {
++    std::uint64_t uses = 0;
++    bool swept = false;
++};
++
++AgcDriver::Mutex& stagingUseMutex() {
++    static AgcDriver::Mutex mutex;
++    return mutex;
++}
++
++std::map<std::pair<std::uint64_t, std::uint64_t>, StagingUse>& stagingUses() {
++    static std::map<std::pair<std::uint64_t, std::uint64_t>, StagingUse> uses;
++    return uses;
++}
++
++bool traceStagingCounts() {
++    static const bool trace = std::getenv("APS5_TRACE_STAGING_COUNTS") != nullptr;
++    return trace;
++}
++
++void countStaged(std::uint64_t begin, std::uint64_t end, bool swept) {
++    if (!traceStagingCounts()) return;
++    std::lock_guard lock(stagingUseMutex());
++    auto& use = stagingUses()[{begin, end}];
++    ++use.uses;
++    use.swept = use.swept || swept;
++}
++
++void reportStagingUses() {
++    if (!traceStagingCounts()) return;
++    std::vector<std::pair<std::pair<std::uint64_t, std::uint64_t>, StagingUse>> rows;
++    {
++        std::lock_guard lock(stagingUseMutex());
++        rows.assign(stagingUses().begin(), stagingUses().end());
++        stagingUses().clear();
++    }
++    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return (a.first.second - a.first.first) * a.second.uses > (b.first.second - b.first.first) * b.second.uses; });
++    std::uint64_t total = 0;
++    for (const auto& row : rows) total += (row.first.second - row.first.first) * row.second.uses;
++    AgcDriver::ProfilePrint_nid_no_patch("[staging-uses] last 10 s: %zu distinct ranges, %.0f MiB copied in\n", rows.size(), total / 1048576.0);
++    for (std::size_t index = 0; index < rows.size() && index < 12; ++index) {
++        const auto& [range, use] = rows[index];
++        const auto bytes = range.second - range.first;
++        AgcDriver::ProfilePrint_nid_no_patch("[staging-uses]   0x%llx+0x%llx %.2f MiB x%llu uses = %.0f MiB%s\n", static_cast<unsigned long long>(range.first), static_cast<unsigned long long>(bytes), bytes / 1048576.0, static_cast<unsigned long long>(use.uses), bytes * use.uses / 1048576.0, use.swept ? " swept" : "");
++    }
++}
++
+ void reportStaging() {
+     auto& stats = Copies();
+     const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+@@ -5144,6 +5191,7 @@ void reportStaging() {
+     lastStaged = staged;
+     lastIn = in;
+     lastOut = out;
++    reportStagingUses();
+ }
+ 
+ }
+@@ -5819,6 +5867,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
+         recorder->Keep(region->buffer);
+         region->snapshot.clear();
+         if (region->deviceLocal) traceStaged(region->begin, region->end, region->atomic);
++        if (region->deviceLocal) countStaged(region->begin, region->end, region->swept);
+         if (profile) {
+             Copies().gpuCopies.fetch_add(1, std::memory_order_relaxed);
+             Copies().gpuCopyBytes.fetch_add(bytes, std::memory_order_relaxed);

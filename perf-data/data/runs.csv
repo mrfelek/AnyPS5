@@ -106,3 +106,9 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 16 MiB,c1 C,59,171.3,150.8,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a2 A (job 9),89,112.4,84.1,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 16 MiB,c2 C,67.0,152.8,128.5,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,cc672fdfc6,a1 A,162,62.1,38.2,,,,,,7.3,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,cc672fdfc6 revert a293f7901b,b1 B,161,62.3,38.8,,,,,,7.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,cc672fdfc6,a2 A,160,62.7,39.9,,,,,,7.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Sonic Origins Plus,PPSA05325,Sonic 2 menu page,Linux desktop,cc672fdfc6 revert a293f7901b,b2 B,165,60.6,38.4,,,,,,7.3,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + staging-uses trace,trace,94.0,107.1,94.9,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 + staging-uses trace,trace,85,118.0,86.6,,,,,,,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
