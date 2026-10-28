@@ -38,6 +38,34 @@ The "hooksync" column is hook syncs per 10 s / time spent in them.
 
 Shared-memory peak: 8,840 / 8,932 / 8,819 / 9,192 MiB (a1 b1 a2 b2).
 
+## Follow-up: the PR kept, swept shadow capped at 16 MiB (desktop)
+
+Question: can a smaller cap on the swept shadow keep the town gain while stopping the menu from staging about 26 MiB regions every frame?
+
+- **Date / machine:** 2026-10-28, Linux desktop (RTX 3080 Ti), same scenes and settings as above.
+- **Builds:** A = upstream `cc672fdfc6`; C = A with one constant changed in `GuestBufferMemory.cpp`: `DiscreteSweptShadowMax` 256 MiB -> 16 MiB. Not upstream.
+- **Order:** a1 c1 a2 c2, no reruns, no errors, no shared-memory spike (peaks 8,872-9,185 MiB). In a2 the town took about 400 s to load (others 25-65 s); its town window was measured normally.
+
+**Result: the cap behaves like the full revert.** The menu is clearly faster (89-93.5 -> 109-111 presents per 10 s, GPU 95-99 -> 77 ms per frame), and the town is clearly slower (82-89 -> 59-67 presents, GPU 84-90 -> 129-151 ms per frame), with most of the extra town GPU time again outside the named classes. **Ruled out:** capping the swept shadow size; below 26 MiB it switches the feature off in both scenes. **Next:** the same as above, trace the town without staging to name that GPU time, then keep staging where it pays (town) by what is written, not by region size.
+
+Menu (+245..+365 s):
+
+| arm | presents/10 s (range) | frame p50 ms | inflight_wait ms | GPU ms/frame | top classes ms/frame | staging in / back per 10 s | VRAM MiB | SM % | app.elf CPU ms/10 s | hooksync |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a1 A | 89.0 (89-90) | 112.6 | 36.9 | 99.4 | draw 62.9, staging-out 13.8, staging-in 10.6, fill 4.0 | 22492 MiB in 865 (26.00) / 22492 in 865 (26.00) | 9835 | 94.1 | 19699 | 126.5 / 3666 ms |
+| c1 C | 111.0 (106-111) | 90.5 | 35.4 | 76.9 | draw 63.6, fill 4.1, storage-upload 2.6, fill-clear 1.2 | 976 in 842 (1.16) / 976 in 842 (1.16) | 9641 | 92.8 | 25724 | 111 / 2150.5 ms |
+| a2 A | 93.5 (91-95) | 107.5 | 34.3 | 95.3 | draw 61.9, staging-out 12.8, staging-in 10.1, fill 3.4 | 23528 in 905 (26.00) / 23528 in 873 (26.96) | 9672 | 92.5 | 19912 | 128 / 3544 ms |
+| c2 C | 109.0 (108-110) | 92.0 | 36.1 | 76.9 | draw 63.6, fill 4.1, storage-upload 2.6, fill-clear 1.1 | 964 in 832 (1.16) / 964 in 832 (1.16) | 9485 | 90.9 | 25578 | 109 / 2182 ms |
+
+Town (last 150 s of 180 s):
+
+| arm | presents/10 s (range) | frame p50 ms | inflight_wait ms | GPU ms/frame | top classes ms/frame | staging in / back per 10 s | VRAM MiB | SM % | app.elf CPU ms/10 s | hooksync |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a1 A | 82.0 (78-84) | 122.5 | 26.5 | 89.8 | draw 51.1, staging-out 13.9, staging-in 10.7, fill 3.6 | 20309 in 3292 (6.17) / 20309 in 2037 (9.97) | 10584 | 79.3 | 24816 | 82 / 987 ms |
+| c1 C | 59 (55-60) | 171.3 | 41.4 | 150.8 | draw 51.8, fill 3.7, storage-upload 2.4, fill-clear 1.2 | 505 in 2220 (0.23) / 505 in 1328 (0.38) | 10367 | 89.5 | 20476 | 59 / 3229 ms |
+| a2 A | 89 (85-91) | 112.4 | 23.9 | 84.1 | draw 49.2, staging-out 12.7, staging-in 10.0, fill 3.1 | 22206 in 3600 (6.17) / 22206 in 2196 (10.11) | 10389 | 77.7 | 26861 | 90 / 923 ms |
+| c2 C | 67.0 (61-67) | 152.8 | 35.6 | 128.5 | draw 49.2, fill 3.2, storage-upload 2.2, fill-clear 0.9 | 572 in 2513 (0.23) / 572 in 1503 (0.38) | 10436 | 86.9 | 23601 | 66.5 / 2534 ms |
+
 ## Same A/B on the AMD mini PC (Radeon 780M)
 
 - **Date / machine:** 2026-10-28, AMD mini PC (Ryzen 9 PRO 8945HS, Radeon 780M integrated GPU, RADV, Mesa 26.0.8). See [machines.md](../machines.md).

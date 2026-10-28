@@ -98,3 +98,11 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6 revert a293f7901b,b1 B,3.9,,,,,,,,3.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6,a2 A,2.7,,,,,,,,3.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Windows laptop,cc672fdfc6 revert a293f7901b,b2 B,2.6,,,,,,,,3.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,a1 A (job 9),89.0,112.6,99.4,,,,,,9.8,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 swept shadow cap 16 MiB,c1 C,111.0,90.5,76.9,,,,,,9.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6,a2 A (job 9),93.5,107.5,95.3,,,,,,9.7,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 swept shadow cap 16 MiB,c2 C,109.0,92.0,76.9,,,,,,9.5,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a1 A (job 9),82.0,122.5,89.8,,,,,,10.6,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 16 MiB,c1 C,59,171.3,150.8,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6,a2 A (job 9),89,112.4,84.1,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
+2026-10-28,Diablo II Resurrected,PPSA03912,town,Linux desktop,cc672fdfc6 swept shadow cap 16 MiB,c2 C,67.0,152.8,128.5,,,,,,10.4,runs/2026-10-28-d2r-written-only-staging-revert-ab.md
