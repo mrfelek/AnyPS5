@@ -7,6 +7,7 @@ Everything I tested on this game, in one place. Upstream discussion: [D#726](htt
 - **Radeon 780M (RADV):** menu and the first area (tut_01) run. Before the fix below there was a diagonal seam across the whole screen (seen since at least 13 October).
 - **RTX 3080 Ti:** title screen at the 60 FPS cap, about 2.4 ms of GPU time per frame.
 - **Start Game aborts on current main (RTX 3080 Ti, 2026-10-25):** about 97 s in, while loading the first area, the log shows "storage image ... memory no longer registered; 135 of 144 pending ranges dropped" and then "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented", and the game terminates. Plain main does the same as main plus my float fix, so the fix is not the cause. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-24-d2r-main-menu-f32-flush-ab.md) (Run 5)
+- **Indirect draws (28 October, Radeon 780M, main `cc672fdfc6`):** none at all in the first area, so the Diablo II indirect fix does not apply here. [survey](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-28-indirect-draw-survey.md#hollow-knight-silksong-ppsa12544-main-cc672fdfc6)
 
 ## The AMD seam: cause and fix
 

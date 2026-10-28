@@ -20,7 +20,7 @@ Update 2026-10-28 (fix written): #10359 plus my base-vertex half, on main `cc672
 
 Update 2026-10-28: on main `cc672fdfc6` with the float fix, the no-read probe removes the stall (3.4-3.7 s per 10 s, one indirect draw per frame, program 0x2b5167e00) and gives +6-11% presents on the D2R menu; the GPU is the limit again afterwards. A real fix has to defer or avoid that read without dropping the draw ([run](../perf-data/runs/2026-10-24-d2r-main-menu-indirect-no-read-probe.md), Run 2).
 
-Survey 2026-10-28 (Windows laptop): Castlevania Belmont's Curse (PPSA35399) has no indirect draws or dispatches at all; Hot Wheels Infinite Rush (PPSA22408) has CPU-path indirect draws for another reason ("non-vertex path") costing only 20-30 ms per 10 s; Metal Gear Solid Peace Walker (PPSA05268) does not boot on current main on Windows. So far the large stall is specific to the Diablo II menu ([survey](../perf-data/runs/2026-10-28-indirect-draw-survey.md)).
+Survey 2026-10-28 (Windows laptop and AMD mini PC): Castlevania Belmont's Curse (PPSA35399) and Hollow Knight: Silksong (PPSA12544) have no indirect draws or dispatches at all; Hot Wheels Infinite Rush (PPSA22408) has CPU-path indirect draws for another reason ("non-vertex path") costing only 20-30 ms per 10 s; Metal Gear Solid Peace Walker (PPSA05268) does not boot on current main on Windows. So far the large stall is specific to the Diablo II menu ([survey](../perf-data/runs/2026-10-28-indirect-draw-survey.md)).
 
 Related merged work: #7930 (skip empty CPU-path indirect draws), #6931, #5979, #460, #6786, #8066. Closed unmerged: #7894 (non-indexed mesh indirect on GPU).
 
