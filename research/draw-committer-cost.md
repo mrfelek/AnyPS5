@@ -52,6 +52,8 @@ Candidates for our own change (not written): keep per-pass objects once per pass
 
 Split timers on AMD: about 46 us per draw, of which descriptor set allocate 0.5 us and update 1.6 us, while buffer snapshots take 3.3 us, template hits 21 us and full builds 71 us (32k per 10 s). In the driver phases the vectors phase is 76.8 of 118.5 us per draw packet, and reading 1,067 empty indirect draws before skipping them costs about 5.5 s per 10 s (about 5.2 ms each). My descriptor set reuse prototype cut descriptor writes by about 30% but left cost per draw, presents and GPU time unchanged, so it is ruled out. The next step is the larger pieces (vectors phase, empty indirect reads, snapshots), and naming the threads so committer and queue-worker time can be told apart. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md)
 
+Follow-up 2026-10-28: the full builds (about 30,000 per 10 s) are mostly rebuilt under the same resource cache key because a texture counts as "refreshed per use" (about 29,000 per 10 s, against about 50,000 reusable builds in total). The way to go is to find why those textures count as refreshed and let an unchanged texture keep its build. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md)
+
 The same prototype on the Sonic 2 menu (RTX 3080 Ti, 25 October) cut descriptor writes per draw by 41%, again with no change in per-draw cost or FPS. [run](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-25-sonic-s2-menu-draw-set-reuse-relocation.md)
 
 AI-assisted. Tested by me on my own machine.
