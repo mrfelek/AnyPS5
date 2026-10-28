@@ -135,7 +135,7 @@ The likely cost (not yet tested) is the re-checking: each decision runs 6-8 fram
 **Result: the menu keeps +21% (93 -> 113 presents per 10 s), and town GPU time is back to the PR-in level (84.1 ms, v1 had 91.8).** Town presents are still about 3% below PR-in (82.5 vs 85-86) with GPU time, staging and committer time equal, so the remaining cost is the probe frames (town still re-checks about every 40 s) or CPU-side bookkeeping.
 
 - **Back-off:** in the menu the interval reached 80 s and held. In town every answer is "staged", but the interval goes 20 -> 40, holds at 40, reaches 80 once, then drops back to 40. The lines that hold or reset are mostly short samples (8/3 frames), so a short sample probably resets or holds the back-off instead of counting as a repeat (read from the log, not from the code).
-- **Next:** count a short sample with the same answer as a repeat, and let the interval keep growing (160-320 s) while the answer stays the same.
+- **Next:** count a short sample with the same answer as a repeat, and let the interval keep growing (160-320 s) while the answer stays the same. Update: [v3 below](#follow-up-adaptive-staging-v3-menu-win-kept-and-town-back-to-pr-level-desktop) does that; town is back to the PR level.
 
 Decision lines, verbatim (15):
 
@@ -155,6 +155,43 @@ Decision lines, verbatim (15):
 [staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.0 ms/frame staged, 117.4 in place (8/3 frames) -> staged, next probe in 80 s
 [staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.3 ms/frame staged, 117.2 in place (14/7 frames) -> staged, next probe in 40 s
 [staging] adaptive: 0x2a86e47f0+0xca80000 GPU 87.2 ms/frame staged, 117.3 in place (13/8 frames) -> staged, next probe in 40 s
+```
+
+## Follow-up: adaptive staging v3, menu win kept and town back to PR level (desktop)
+
+- **Build:** B = `cc672fdfc6` + [adaptive-staging-v3.diff](../../research/patches/adaptive-staging-v3.diff) (replaces v2: a short sample with the same answer counts as a repeat, the interval grows up to 160 s, and a jump in frame GPU time triggers a new check at once). A = plain `cc672fdfc6`, the two runs from the v1 and v2 pairs (same day). Same environment, headless, muted, shader disk cache off. One B run, menu and town in the same run, no errors.
+
+| | A1 / A2 (PR in) | v1 | v2 | v3 |
+|---|---|---|---|---|
+| Menu presents per 10 s | 93.0 / 93.5 | 112.5 | 113.0 | 112.5 |
+| Menu GPU ms per frame | 95.8 / 95.2 | 75.8 | 75.7 | 75.9 |
+| Menu staging ms per frame (in + out) | 10.3 + 12.5 | 2.5 + 2.1 | 1.6 + 1.6 | 2.2 + 1.7 |
+| Town presents per 10 s | 86 / 85 | 81 | 82.5 | 85 |
+| Town GPU ms per frame | 84.3 / 83.9 | 91.8 | 84.1 | 84.6 |
+| Town staging GB per 10 s | 21.4 / 21.1 | 19.0 | 19.4 | 21.1 |
+| Committer us per commit (menu / town) | 37.3 / 28.6 | 38.0 / 29.8 | 37.7 / 27.4 | 38.0 / 28.8 |
+
+**Result: the goal is met. The menu keeps +21% (93 -> 112.5 presents per 10 s, GPU 95.8 -> 75.9 ms per frame), and the town is back to the level with the PR (85 vs 85-86 presents, GPU 84.6 vs 84 ms).** So #7618 does not need to be reverted or capped: deciding per element, by measured GPU time, keeps the gains of both sides.
+
+- **Back-off:** 20 -> 40 -> 80 -> 160 s, then it holds at 160 s. At the change from menu to town it sees the frame GPU time jump (79.4 -> 202.6 ms) and checks again at once, then switches the 202.5 MiB element to staged.
+- Loading the save into town took longer in this run (+768 s; A2 +556 s, earlier about +390 s). It happens before the measured windows and does not affect them.
+- **Next:** one more pair to confirm (A B on the same day), then decide with Andrzej whether it goes upstream as a follow-up to #7618.
+
+Decision lines, verbatim (12):
+
+```
+[staging] adaptive: 0x2601212e0+0x140000 GPU 90.7 ms/frame staged, 113.4 in place (6/7 frames) -> staged (not measured), next probe in 20 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 107.1 ms/frame staged, 85.4 in place (15/7 frames) -> in place, next probe in 20 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 105.3 ms/frame staged, 85.0 in place (8/3 frames) -> in place, next probe in 40 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 107.7 ms/frame staged, 85.1 in place (8/3 frames) -> in place, next probe in 80 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 98.4 ms/frame staged, 79.4 in place (8/3 frames) -> in place, next probe in 160 s
+[staging] adaptive: frame GPU 79.4 -> 202.6 ms, probing again
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 84.1 ms/frame staged, 93.9 in place (16/7 frames) -> staged, next probe in 20 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 87.9 ms/frame staged, 119.9 in place (15/8 frames) -> staged, next probe in 40 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 88.0 ms/frame staged, 122.4 in place (8/3 frames) -> staged, next probe in 80 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 91.8 ms/frame staged, 129.1 in place (8/3 frames) -> staged, next probe in 160 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 87.8 ms/frame staged, 121.1 in place (8/3 frames) -> staged, next probe in 160 s
+[staging] adaptive: 0x2a86b47f0+0xca80000 GPU 88.1 ms/frame staged, 120.8 in place (8/3 frames) -> staged, next probe in 160 s
 ```
 
 ## What is staged: trace (desktop)
