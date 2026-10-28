@@ -7,6 +7,7 @@ Everything I tested on this game, in one place. Upstream discussion: [D#5832](ht
 - **In-game on Linux and Windows.** The menu runs at 60 FPS. The opening cinematic is black: hold Circle to skip it.
 - **Windows laptop, plain main:** always reaches gameplay, sometimes after a few minutes on the loading screen.
 - **Setup, Linux:** unwrap `Media/Modules` and `Media/Plugins`, then `relinker --registry --module-dir Media/Modules --module-dir Media/Plugins src/eboot.elf app.elf`. **Windows:** add `--windows` to get `app.exe`; put the `.guest.prx` files next to the originals in `app0` (`Media/Modules`, `Media/Plugins`, `sce_module`), not in the `libs` folder. A self-built Windows binary also needs the MinGW `libgcc_s_seh-1`, `libstdc++-6` and `libwinpthread-1` DLLs in the `libs` folder (otherwise error 126).
+- **Indirect draws (28 October, Windows laptop, main `cc672fdfc6`):** none at all, draws or dispatches, so the Diablo II indirect fix does not apply here. [survey](https://github.com/mrfelek/AnyPS5/blob/main/perf-data/runs/2026-10-28-indirect-draw-survey.md#castlevania-belmonts-curse-ppsa35399-main-cc672fdfc6)
 
 ## Speed
 

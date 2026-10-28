@@ -129,3 +129,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,B1 per-use refresh,54.0,,181.8,,,,,,1.9,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
 2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,A2,53.0,,183.6,,,,,,2.0,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
 2026-10-28,Diablo II Resurrected,PPSA03912,character select,AMD mini PC,e4bb5fc125 + per-use refresh p1,B2 per-use refresh,53.8,,182.9,,,,,,2.0,runs/2026-10-25-d2r-character-select-amd-draw-set-reuse.md
+2026-10-28,Castlevania Belmont's Curse,PPSA35399,gameplay,Windows laptop,cc672fdfc6,indirect survey,38.2,,104.9,,,,,,,runs/2026-10-28-indirect-draw-survey.md
+2026-10-28,Hot Wheels Infinite Rush,PPSA22408,title,Windows laptop,6d0139cd33,indirect survey,36.2,,113,,,,,,,runs/2026-10-28-indirect-draw-survey.md
+2026-10-28,Hot Wheels Infinite Rush,PPSA22408,menu,Windows laptop,6d0139cd33,indirect survey,35.6,,109,,,,,,,runs/2026-10-28-indirect-draw-survey.md
+2026-10-28,Hot Wheels Infinite Rush,PPSA22408,garage,Windows laptop,6d0139cd33,indirect survey,10.1,,151,,,,,,,runs/2026-10-28-indirect-draw-survey.md
