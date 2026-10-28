@@ -144,3 +144,7 @@ date,game,game_id,phase,machine,commit,arm,presents_per_10s,frame_p50_ms,gpu_ms_
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,A3 routes off,95.0,106.3,94.1,,,,,,,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
 2026-10-28,Diablo II Resurrected,PPSA03912,main menu,Linux desktop,cc672fdfc6 + #10359 + base vertex,B3 routes on,100.0,100.8,95.7,,,,,,,runs/2026-10-28-d2r-main-menu-indirect-gpu-path-ab.md
 2026-10-28,Hollow Knight: Silksong,PPSA12544,first area,AMD mini PC,cc672fdfc6,indirect survey,600,,,,,,,,,runs/2026-10-28-indirect-draw-survey.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,a1 A,96,104.6,91.8,,,,,,9.9,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,b1 B per-use refresh,102,97.6,91.2,,,,,,10.0,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,a2 A,90,112.0,98.3,,,,,,9.9,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md
+2026-10-28,Diablo II Resurrected,PPSA03912,character select,Linux desktop,04fefebe90 + per-use refresh p1,b2 B per-use refresh,95,105.9,97.3,,,,,,9.7,runs/2026-10-28-d2r-character-select-per-use-refresh-desktop.md

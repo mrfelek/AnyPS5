@@ -114,7 +114,7 @@ Last two counted windows:
 - Memory is the same in all four: RSS 8.2-8.4 GiB, VRAM 1.91-1.97 GiB, GTT 11.2-12.2 GiB.
 - **Picture:** GPU readbacks at +15, +121 and +177 s. B differs from A1 no more than A2 or the 25 October baseline do (mean pixel difference 2.1-2.7, 1.3-2.0% of pixels over 24, from the idle animation). By eye the same screen: character, weapon glow, ground shadows, campfire and depth effects all intact.
 
-**Next:** a CPU saving only shows up as FPS where the CPU is the limit, so measure this on a CPU-bound scene (the D2R menu on the RTX 3080 Ti, or the Sonic 2 menu), and run the draw verifier with the switch on before proposing it upstream.
+**Next:** a CPU saving only shows up as FPS where the CPU is the limit, so measure this on a CPU-bound scene (the D2R menu on the RTX 3080 Ti, or the Sonic 2 menu), and run the draw verifier with the switch on before proposing it upstream. Desktop result (28 October): committer -34%, presents +6%, then GPU-bound, same picture ([run](2026-10-28-d2r-character-select-per-use-refresh-desktop.md)).
 
 Last two counted windows per arm, verbatim (`[buffers]` is the last cumulative upload line in the window):
 
