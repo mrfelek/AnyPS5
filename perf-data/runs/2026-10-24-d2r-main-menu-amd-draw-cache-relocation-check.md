@@ -37,4 +37,37 @@ No speed numbers for B; the A/B on speed waits until the relocation passes this 
 
 **Way forward:** repeat the verifier runs with `APS5_VERIFY_DRAW_DATA_HITS=1` and `APS5_TRACE_DRAW_CACHE=1` together, so the log shows relocated stages being checked; then repeat the speed A/B in a fixed scene with enough free disk.
 
+
+## Run 4 (2026-10-28): v3 verifier with the trace on
+
+- **Build:** same as run 3. `APS5_VERIFY_DRAW_DATA_HITS=1` and `APS5_TRACE_DRAW_CACHE=1` together, audio muted, 180 s counted per game.
+- **Verifier: no failures.** No abort, terminate, segfault, validation error or device loss. Stages verified with no mismatch: D2R main menu 180,665, Hot Wheels Infinite Rush (PPSA22408) title 1,036, Hollow Knight Silksong (PPSA12544) gameplay area 81,609.
+- **Caveat: the verifier never sees a relocated stage.** Every window reads "0 reused, 0 of them relocated", because in verify mode each data-only hit is compiled in full and checked instead of going through the reuse and relocation path (without the verifier the Hot Wheels title relocates 82-84 stages per 10 s). So this proves the data-only candidates match a fresh build, not that relocated stages are correct.
+- **Way forward:** a verifier that checks the stage the reuse and relocation path actually serves (relocate first, then compare with a fresh build), instead of replacing that path.
+
+Two windows per game, verbatim:
+
+```
+D2R menu (menu after 36 s, 0 character loads):
+window 9 of 18:
+[draw-cache] 10 s: 70934 lookups, 4337 hits (6.1%), 130 stage misses, 70720 without an entry, 66395 data-only hits (stages: 0 reused, 0 of them relocated, 132790 compiled; 10070 verified); no entry: new registers 0, user words/pointers only 70676, evicted 15, seen but never inserted 29; stage misses: front differing 95, fragment differing 35, other differing 0, layout 0, gate 0, stage count 0; differing captures: same runs 190 (2.0 words changed each), other runs 21; 4096 entries, 1703 evicted
+window 18 of 18:
+[draw-cache] 10 s: 71129 lookups, 4443 hits (6.2%), 115 stage misses, 70917 without an entry, 66512 data-only hits (stages: 0 reused, 0 of them relocated, 133024 compiled; 9828 verified); no entry: new registers 0, user words/pointers only 70891, evicted 13, seen but never inserted 13; stage misses: front differing 86, fragment differing 29, other differing 0, layout 0, gate 0, stage count 0; differing captures: same runs 172 (2.0 words changed each), other runs 19; 4096 entries, 1642 evicted
+All 18 windows: 0 relocated, 180665 verified.
+
+HW title (title at frame_081):
+window 9 of 18:
+[draw-cache] 10 s: 255 lookups, 0 hits (0.0%), 0 stage misses, 255 without an entry, 195 data-only hits (stages: 0 reused, 0 of them relocated, 390 compiled; 55 verified); no entry: new registers 0, user words/pointers only 251, evicted 0, seen but never inserted 4; stage misses: front differing 0, fragment differing 0, other differing 0, layout 0, gate 0, stage count 0; differing captures: same runs 0 (0.0 words changed each), other runs 0; 451 entries, 0 evicted
+window 18 of 18:
+[draw-cache] 10 s: 261 lookups, 2 hits (0.8%), 4 stage misses, 257 without an entry, 189 data-only hits (stages: 0 reused, 0 of them relocated, 378 compiled; 50 verified); no entry: new registers 0, user words/pointers only 246, evicted 0, seen but never inserted 11; stage misses: front differing 0, fragment differing 4, other differing 0, layout 0, gate 0, stage count 0; differing captures: same runs 4 (2.5 words changed each), other runs 0; 577 entries, 0 evicted
+All 18 windows: 0 relocated, 1036 verified.
+
+Silksong gameplay area:
+window 9 of 18:
+[draw-cache] 10 s: 94970 lookups, 81783 hits (86.1%), 3205 stage misses, 9982 without an entry, 9981 data-only hits (stages: 0 reused, 0 of them relocated, 19962 compiled; 4508 verified); no entry: new registers 0, user words/pointers only 124, evicted 9710, seen but never inserted 148; stage misses: front differing 3205, fragment differing 0, other differing 0, layout 0, gate 0, stage count 0; differing captures: same runs 6410 (2.2 words changed each), other runs 0; 4096 entries, 8857 evicted
+window 18 of 18:
+[draw-cache] 10 s: 94989 lookups, 79105 hits (83.3%), 2502 stage misses, 13382 without an entry, 13378 data-only hits (stages: 0 reused, 0 of them relocated, 26756 compiled; 6253 verified); no entry: new registers 0, user words/pointers only 4, evicted 13356, seen but never inserted 22; stage misses: front differing 2502, fragment differing 0, other differing 0, layout 0, gate 0, stage count 0; differing captures: same runs 5004 (2.1 words changed each), other runs 0; 4096 entries, 11621 evicted
+All 18 windows: 0 relocated, 81609 verified.
+```
+
 AI-assisted. Tested by me on my own machine.
