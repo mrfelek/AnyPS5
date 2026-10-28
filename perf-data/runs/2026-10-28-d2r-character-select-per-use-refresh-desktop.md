@@ -1,4 +1,4 @@
-# Diablo II Resurrected (PPSA03912), character select, per-use refresh fix prototype and upstream #10894 on the RTX 3080 Ti
+# Diablo II Resurrected (PPSA03912), per-use refresh: our prototype and upstream #10894
 
 Question: on the Radeon 780M the [per-use refresh prototype](2026-10-25-d2r-character-select-amd-draw-set-reuse.md#fix-prototype-keep-builds-whose-depth-plane-texture-is-refreshed-per-use-2026-10-28) cut committer time by about 25% but could not raise FPS, because that menu is GPU-bound there. Does it help on the desktop, where this menu is closer to CPU-bound? This run is also the reference for open upstream [#10894](https://github.com/boykopovar/AnyPS5/pull/10894) (WallisSkill), which addresses the same rebuilds and will be measured next the same way.
 
@@ -51,8 +51,56 @@ Question: on the Radeon 780M the [per-use refresh prototype](2026-10-25-d2r-char
 - **Cost:** B spends about 474 ms more per 10 s revalidating (161,715 calls / 224.6 ms in A against 228,443 / 698.9 ms in B, with 47,336 per-use partial walks).
 - **Picture:** the town screenshots differ in 0.30% of pixels (rain particles only), the menu in 2.24% (animation). No visible error.
 - Against the prototype above (menu only, different base): same mechanism and the same cache effect; #10894 gives the larger menu gain here (+16% against +6%) and +20% in town.
-- A verifier arm (PR on with proof verification, menu and 60 s of town) is running; its result will be added here.
+- The verifier result is below.
 
-**Way to go:** #10894 rather than our prototype; the prototype stays only as a reference.
+### Verifier: the per-use partial walk disagrees with the full walk
+
+- **PR on with proof verification (`APS5_VERIFY_PROOFS=1`):** about 8 s after the button press into the menu (+132-133 s), the log prints `[rescache] APS5_VERIFY_PROOFS: the per-use partial walk disagrees with the full walk`, and the process stops. That stop is by design: in the PR source the verifier runs a full walk after each per-use fast proof and aborts on a disagreement. Reproduced on a second run; the lines just before it are resource-key misses for draw and dispatch shader sets ("layout", "no-component-change"). The PR has no switch that names the disagreeing draw.
+- **PR on with the partial walk off (`APS5_NO_PER_USE_PARTIAL_WALK=1`):** clean, 180 s in town, no errors, memory normal.
+
+| | PR off | PR on | PR on, partial walk off |
+|---|---|---|---|
+| menu presents /10 s | 90 | 104 | 100 |
+| menu GPU ms/frame | 97.5 | 89.9 | 92.1 |
+| town presents /10 s | 80 | 96 | 91 |
+| town GPU ms/frame | 90.3 | 67.2 | 83.2 |
+| committer us (menu / town) | 37.7 / 28.3 | 24.6 / 21.3 | 29.8 / 23.4 |
+| resource cache misses (menu / town) | 52k / 40k | 0 / 0 | 0 / 0 |
+| town revalidate (last 10 s) | 161,715 calls, 225 ms | 228,443 calls, 699 ms, 3,928 full | 233,234 calls, 1,349 ms, 48,686 full (46,228 "per-use texture") |
+
+Without the partial walk every per-use reuse falls back to a full walk, so revalidation doubles and about 5 presents per window are lost, but it is still +11% (menu) and +14% (town) over PR off. The partial walk gives the extra gain and is also the part the verifier flags.
+
+**Way to go:** #10894's templates, with the full-walk fallback as the safe default until the partial walk agrees with the full walk on Diablo II; our prototype stays only as a reference.
+
+## Upstream #10894 on the AMD mini PC (Radeon 780M)
+
+- **Machine:** AMD mini PC, Ryzen 9 PRO 8945HS, Radeon 780M (RADV, Mesa 26.0.8). See [machines.md](../machines.md).
+- **Build:** the PR head `0c6bca70d9`, Release. One run per arm covering the menu (+245..+365 s) and then town (last 150 s of 180 s), shader disk cache off, audio muted. A = PR off, B = PR on, V = B with proof verification, W = V with the partial walk off. No validation errors, device loss or terminate in A, B or W.
+
+**Result: town +16% presents (55 -> 64 per 10 s, frame p50 183 -> 158 ms); the menu stays at about 58 because it is GPU-bound on this machine.** Builds drop about 25 times, committer time 30% (menu) and 18% (town); GPU time per frame is unchanged. No regression seen.
+
+| per 10 s (median) | A menu | B menu | A town | B town |
+|---|---|---|---|---|
+| presents | 58 | 59 | 55 | 64 |
+| frame p50 ms | 173.2 | 171.6 | 183.2 | 158.0 |
+| GPU busy per present ms | 168.7 | 168.7 | 142.9 | 140.0 |
+| committer us per commit | 45.8 | 32.2 | 47.8 | 39.0 |
+| recorded draw average us | 42 | 27 | 35 | 25 |
+| template hits / builds | 44937 / 34800 | 78866 / 1401 | 112111 / 28922 | 162127 / 1518 |
+| resource cache draw misses | 33408 | 0 | 27625 | 0 |
+| revalidate ms (per-use partial walks) | 97.6 (0) | 459.9 (31708) | 189.1 (0) | 577.1 (30720) |
+
+- **Verifier (V):** the same "per-use partial walk disagrees with the full walk" line, once, at about +128 s on the "press to begin" screen right after the button press, before the menu; the run then ended. **With the partial walk off (W):** clean through the whole menu and into town (presents 58 / 61, builds about 1,400 per 10 s, resource cache misses 0). Same pattern as on the desktop.
+- **Town picture:** every AMD town frame is fully textured (ground around the player, the campfire and between tiles, lit torches), in A and in B.
+- The machine went to sleep during W's town phase, so W has only 2 town windows.
+
+Last revalidate window of each, verbatim:
+
+```
+A menu: [rescache] revalidate (10 s): 46084 calls 97.6 ms: fast 44458, full 1626, failed 0; fast-fail by reason: pending image 145 memory changed 29; full walks: T1 refreshed 118 (0 storage images, 145 view sources, 0 views served by their own pending source, 0 overlaps left by the refresh accepted), full by reason: memory changed 29 audit 1597, T1 fallback by reason:, proofs verified 0; fast-fail pending image: own 0 (the query excepts the own object), foreign 145, snapshot 0, T1 eligible 145; keys proven: 0 sampled, 0 storage; epoch gate: 35380 registry scans skipped, 46084 import loops skipped; lookup log: 0 builds and full walks kept their records past the bound; per-use partial walks 0
+A town: [rescache] revalidate (10 s): 113576 calls 189.1 ms: fast 110997, full 2579, failed 0; fast-fail by reason: pending image 137 memory changed 27; full walks: T1 refreshed 110 (0 storage images, 137 view sources, 0 views served by their own pending source, 0 overlaps left by the refresh accepted), full by reason: memory changed 27 audit 2552, T1 fallback by reason:, proofs verified 0; fast-fail pending image: own 0 (the query excepts the own object), foreign 137, snapshot 0, T1 eligible 137; keys proven: 0 sampled, 0 storage; epoch gate: 97794 registry scans skipped, 113576 import loops skipped; lookup log: 0 builds and full walks kept their records past the bound; per-use partial walks 0
+B menu: [rescache] revalidate (10 s): 79518 calls 459.9 ms: fast 76104, full 3414, failed 0; fast-fail by reason: pending image 145 memory changed 29; full walks: T1 refreshed 116 (0 storage images, 145 view sources, 0 views served by their own pending source, 0 overlaps left by the refresh accepted), full by reason: memory changed 29 audit 3385, T1 fallback by reason:, proofs verified 0; fast-fail pending image: own 0 (the query excepts the own object), foreign 145, snapshot 0, T1 eligible 145; keys proven: 0 sampled, 0 storage; epoch gate: 58696 registry scans skipped, 79518 import loops skipped; lookup log: 0 builds and full walks kept their records past the bound; per-use partial walks 31708
+B town: [rescache] revalidate (10 s): 163917 calls 577.1 ms: fast 160054, full 3863, failed 0; fast-fail by reason: pending image 158 memory changed 31; full walks: T1 refreshed 132 (0 storage images, 158 view sources, 0 views served by their own pending source, 0 overlaps left by the refresh accepted), full by reason: memory changed 31 audit 3832, T1 fallback by reason:, proofs verified 0; fast-fail pending image: own 0 (the query excepts the own object), foreign 158, snapshot 0, T1 eligible 158; keys proven: 0 sampled, 0 storage; epoch gate: 136535 registry scans skipped, 163917 import loops skipped; lookup log: 0 builds and full walks kept their records past the bound; per-use partial walks 30720
+```
 
 AI-assisted. Tested by me on my own machine.
