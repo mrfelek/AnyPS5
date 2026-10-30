@@ -6,7 +6,7 @@ Everything I tested on this game, in one place. Upstream discussion: [D#675](htt
 
 | Build | How far | Notes |
 |---|---|---|
-| Upstream main, no extra files | Black screen with a loading spinner, never leaves loading | Needs `anyps5-entitlements.ini` next to `app.elf` (for this dump the label `GHOSTYOTEIDUPLEX`), as others in this thread found. |
+| Upstream main, no extra files | Black screen with a loading spinner, never leaves loading | Needs `anyps5-entitlements.ini` next to `app.elf`, as others in this thread found. |
 | Upstream main + entitlements file | Title-scene load, then stops after about 7.6 min | "blending unclamped normalized color is not implemented" (8_8 UNORM target, blending on). The merged unclamped-target change (#6875) accepts these targets only without blending. My approximate fix lets Vulkan blend with its clamp: [patch](https://github.com/mrfelek/AnyPS5/blob/main/research/patches/yotei-blend-unclamped-normalized.patch). With it the game passes that point but stays black at about 1 FPS while it compiles shaders and runs out of VRAM. |
 | Celegans12's `yotei/best` | Crashed after 3 min on Linux | Divide by zero in the game's audio setup: the AT9 vibration channel config is not parsed. Fixed on main by the AT9 config change (#6721), which that branch did not have yet. Also needs a Linux build fix (`State` size assert). |
 | hritikutekar's `yotei/linux-best-u2` | **Furthest:** "Select an Experience" at 6.5 min, opening cinematic at about 26 min (cold), first "write their names" touchpad scene at about 38 min | 0.1-1 FPS, no errors in 60 min, VRAM 7.9-9.2 GB, RAM about 17.6 GB, shader cache 35-37 GB. Scripted Cross presses get past the menus; the names scene needs moving touch input (passed by hand with a DualSense). |
