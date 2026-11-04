@@ -1005,7 +1005,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         return IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle;
     }();
     bool stagedFlushed = false;
-    const bool flushAsked = (source == nullptr || stagedClear) && !clearThroughKeys;
+    const bool flushAsked = (source == nullptr || (stagedClear && StorageTexture::FindPending(address, bytes) != nullptr)) && !clearThroughKeys;
     if (flushAsked && StorageTexture::FlushPending(address, bytes, nullptr, "sampled texture")) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::PendingFlush, flushStart);
         generation = GuestMemory::CollectWrites(address, bytes);
