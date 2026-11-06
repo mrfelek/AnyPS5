@@ -479,6 +479,9 @@ private:
         std::shared_ptr<Buffer> buffer;
         // Guest bytes as uploaded; write-back only stores bytes the GPU changed.
         std::vector<std::byte> uploaded {};
+        // Prototype (APS5_DIFF_IN_PLACE): instead of `uploaded`, the write generation the upload read at;
+        // a block the CPU did not write since then still holds the uploaded bytes in guest memory.
+        std::uint64_t diffGeneration = 0;
         // Registered allocation that is imported: its bytes are read from live guest memory, not a snapshot.
         bool hostBacked = false;
         // Set when the region is served by an imported allocation; nothing is copied or written back.

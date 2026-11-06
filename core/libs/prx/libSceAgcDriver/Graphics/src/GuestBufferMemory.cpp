@@ -6419,10 +6419,13 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         // Only ranges a descriptor may write need the copy the write-back diffs against; the
         // registered ranges of an address-based shader are read-only to it (AddressRanges).
         const bool written = region.writable && WritesOverlap(region.begin, static_cast<std::size_t>(bytes));
+        static const bool diffInPlace = std::getenv("APS5_DIFF_IN_PLACE") != nullptr;
+        const bool inPlace = written && diffInPlace && !region.sparse && bytes >= (std::uint64_t{64} << 20u);
         if (!region.sparse) {
+            if (inPlace) region.diffGeneration = GuestMemory::CollectWrites(region.begin, static_cast<std::size_t>(bytes));
             GuestMemory::Read(region.begin, region.buffer->Bytes());
             readBytes += region.buffer->Bytes().size();
-            if (written) region.uploaded.assign(region.buffer->Bytes().begin(), region.buffer->Bytes().end());
+            if (written && !inPlace) region.uploaded.assign(region.buffer->Bytes().begin(), region.buffer->Bytes().end());
         } else {
             // `uploaded` holds the backed pieces back to back.
             const auto target = region.buffer->Bytes().first(static_cast<std::size_t>(allocated));
@@ -7151,6 +7154,23 @@ void GuestBufferMemory::WriteBack() {
         Require(region.buffer != nullptr && region.writable && end <= region.end, "write-back range exceeds its GPU owner");
         static const bool traceBig = std::getenv("APS5_TRACE_BIGBUF") != nullptr;
         if (traceBig && end - begin >= (1u << 20u)) std::fprintf(stderr, "[bigbuf] writeback 0x%llx+0x%llx sparse=%d\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), region.sparse ? 1 : 0);
+        if (!region.sparse && region.diffGeneration != 0) {
+            static std::atomic<std::uint64_t> stored{0}, conflicts{0};
+            constexpr std::uint64_t block = 65536;
+            for (auto from = begin; from < end;) {
+                const auto to = std::min(end, (from / block + 1) * block);
+                const auto length = static_cast<std::size_t>(to - from);
+                if (GuestMemory::UnchangedSince(from, length, region.diffGeneration)) {
+                    storeChanged(from, region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length), std::span<const std::byte>(reinterpret_cast<const std::byte*>(from), length), GuestMemory::WriteChangedKeepingGuest);
+                    stored.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    conflicts.fetch_add(1, std::memory_order_relaxed);
+                }
+                from = to;
+            }
+            if (traceBig) std::fprintf(stderr, "[bigbuf] in-place diff totals: %llu blocks diffed against guest memory, %llu blocks the CPU wrote since the upload (guest kept)\n", static_cast<unsigned long long>(stored.load()), static_cast<unsigned long long>(conflicts.load()));
+            continue;
+        }
         if (!region.sparse) {
             const auto first = static_cast<std::size_t>(begin - region.begin);
             const auto length = static_cast<std::size_t>(end - begin);
