@@ -715,9 +715,22 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
     result.layerReplaySafe = LayerReplaySafe(program);
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
+    if (stencilReplay && std::getenv("APS5_DIAG_STENCIL_UNSAFE") != nullptr) std::fprintf(stderr, "[diag-replay] fragment 0x%llx with a stencil export: replay safe %d (%s), variant 0x%llx\n", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<int>(result.stencilReplaySafe), result.stencilReplaySafe ? "-" : StencilReplayUnsafeWhy.c_str(), static_cast<unsigned long long>(result.variantId));
+    if (request.shader.stage == ShaderStage::Vertex && !result.stencilReplaySafe && std::getenv("APS5_DIAG_STENCIL_UNSAFE") != nullptr) std::fprintf(stderr, "[diag-replay] vertex 0x%llx not replay safe: %s, variant 0x%llx\n", static_cast<unsigned long long>(request.shader.codeAddress), StencilReplayUnsafeWhy.c_str(), static_cast<unsigned long long>(result.variantId));
+    result.stencilReplayWindingFree = std::none_of(program.Info().inputs.begin(), program.Info().inputs.end(), [](const auto& input) {
+        switch (input.kind) {
+            case StageInputKind::FrontFacing: case StageInputKind::PackedAncillary: case StageInputKind::RasterPrimitive:
+            case StageInputKind::BaryCoordSmooth: case StageInputKind::BaryCoordNoPerspective: case StageInputKind::BaryCoordSmoothCenter:
+            case StageInputKind::BaryCoordNoPerspectiveCenter: case StageInputKind::BaryCoordSmoothSample: case StageInputKind::BaryCoordNoPerspectiveSample:
+                return true;
+            default:
+                return false;
+        }
+    });
     result.bdaWrites = program.Info().bdaWrites;
     if (stencilReplay) {
         result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
+        if (!result.stencilReplaySafe && std::getenv("APS5_DIAG_IGNORE_STENCIL_EXPORT") != nullptr) result.stencilReferences.clear();
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
 
@@ -1178,6 +1191,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .meshBarycentrics = artifact.meshBarycentrics,
         .stencilReferences = artifact.stencilReferences,
         .stencilReplaySafe = artifact.stencilReplaySafe,
+        .stencilReplayWindingFree = artifact.stencilReplayWindingFree,
         .bdaWrites = artifact.bdaWrites,
         .layerReplaySafe = artifact.layerReplaySafe,
         .stencilReferenceDword = artifact.stencilReferenceDword,

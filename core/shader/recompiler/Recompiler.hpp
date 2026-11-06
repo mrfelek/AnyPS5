@@ -777,6 +777,7 @@ struct CompiledShaderArtifact {
     std::optional<MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
+    bool stencilReplayWindingFree = false;
     bool bdaWrites = false;
     bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;

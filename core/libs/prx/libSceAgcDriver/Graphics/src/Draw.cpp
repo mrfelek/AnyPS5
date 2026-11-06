@@ -2439,6 +2439,7 @@ struct RecordedDraw {
     const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = nullptr;
     VkShaderStageFlags pushStages = 0;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
+    std::shared_ptr<Pipeline> stencilReplayFlipped;
     std::vector<SampleOrderTarget> reordered;
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
@@ -2454,7 +2455,7 @@ void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
-void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
+void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::shared_ptr<Pipeline>& flipped, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
     if (bytes == nullptr) {
@@ -2484,13 +2485,22 @@ void recordStencilReplay(const Context& context, VkCommandBuffer commands, const
     }
     const auto indexCount = draw.indexed ? inputs.indexCount.value_or(draw.indexCount) : draw.indexCount;
     for (std::uint32_t instance = 0; instance < draw.instanceCount; ++instance) {
-        for (std::uint32_t first = 0; first < indexCount - indexCount % 3u; first += 3u) {
+        const bool strip = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+        const auto last = strip ? (indexCount >= 3u ? indexCount - 2u : 0u) : indexCount - indexCount % 3u;
+        for (std::uint32_t first = 0; first < last; first += strip ? 1u : 3u) {
             auto piece = draw;
             piece.instanceCount = 1u;
             piece.firstInstance = draw.firstInstance + instance;
             piece.indexCount = 3u;
             if (!draw.indexed) piece.firstVertex += first;
+            const bool odd = strip && (first & 1u) != 0u && flipped != nullptr;
+            if (odd) {
+                auto reversed = selected;
+                reversed.frontFace = selected.frontFace == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+                flipped->Continue(commands, reversed);
+            }
             run(piece, draw.indexed ? first : 0u);
+            if (odd) replay.front().second->Continue(commands, selected);
         }
     }
 }
@@ -2807,7 +2817,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
+        recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.stencilReplayFlipped, record.pushBytes, record.pushStages);
+        if (record.stencilReplayFlipped != nullptr) recorder->Keep(record.stencilReplayFlipped);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
@@ -2974,6 +2985,7 @@ struct PreparedDraw {
     bool multisampled = false;
     std::optional<State> masked;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
+    std::shared_ptr<Pipeline> stencilReplayFlipped;
     std::shared_ptr<Pipeline> pipeline;
     std::vector<std::shared_ptr<StorageTexture>> owners;
     std::vector<std::shared_ptr<void>> framebufferOwners;
@@ -3134,10 +3146,24 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             stencilReferences = shader.program->stencilReferences;
         }
     }
+    if (!stencilReferences.empty() && std::getenv("APS5_DIAG_IGNORE_STENCIL_EXPORT") != nullptr && !std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe; })) {
+        static std::once_flag noted;
+        std::call_once(noted, [] { std::fprintf(stderr, "[diag-stencil] skipping the stencil replay of a draw whose stages are not replay safe\n"); });
+        stencilReferences.clear();
+    }
     if (!stencilReferences.empty()) {
-        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, "stencil replay supports direct triangle lists without restart, mesh or tessellation");
+        const bool replayStrip = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.polygonMode == VK_POLYGON_MODE_FILL && std::memcmp(&state.stencilFront, &state.stencilBack, offsetof(VkStencilOpState, reference)) == 0 && std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && (shader.stage != ShaderRecompiler::ShaderStage::Fragment || shader.program->stencilReplayWindingFree); });
+        if (draw.indirect || state.primitiveRestart || state.rectList || state.quadList || state.stages.mesh || state.stages.tessellation || (state.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && !replayStrip)) throw std::runtime_error("AGC graphics: stencil replay supports direct triangle lists without restart, mesh or tessellation [diag indirect=" + std::to_string(draw.indirect.has_value()) + " indexed=" + std::to_string(draw.indexed) + " restart=" + std::to_string(state.primitiveRestart) + " rect=" + std::to_string(state.rectList) + " quad=" + std::to_string(state.quadList) + " mesh=" + std::to_string(state.stages.mesh.has_value()) + " tess=" + std::to_string(state.stages.tessellation.has_value()) + " topology=" + std::to_string(static_cast<int>(state.topology)) + " count=" + std::to_string(draw.indexCount) + " instances=" + std::to_string(draw.instanceCount) + " cull=" + std::to_string(state.cullMode) + " polygon=" + std::to_string(static_cast<int>(state.polygonMode)) + " stencilSame=" + std::to_string(std::memcmp(&state.stencilFront, &state.stencilBack, offsetof(VkStencilOpState, reference)) == 0) + " frontOps=" + std::to_string(state.stencilFront.failOp) + "/" + std::to_string(state.stencilFront.passOp) + "/" + std::to_string(state.stencilFront.depthFailOp) + "/" + std::to_string(state.stencilFront.compareOp) + " backOps=" + std::to_string(state.stencilBack.failOp) + "/" + std::to_string(state.stencilBack.passOp) + "/" + std::to_string(state.stencilBack.depthFailOp) + "/" + std::to_string(state.stencilBack.compareOp) + " masks=" + std::to_string(state.stencilFront.compareMask) + "," + std::to_string(state.stencilFront.writeMask) + "/" + std::to_string(state.stencilBack.compareMask) + "," + std::to_string(state.stencilBack.writeMask) + " windingFree=" + std::to_string(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && (shader.stage != ShaderRecompiler::ShaderStage::Fragment || shader.program->stencilReplayWindingFree); })) + "]");
         Require(!state.depthBiasPerFace && !ShadersWriteMemory(shaders), "stencil replay refuses face splits and shader memory writes");
-        Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe && (shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Fragment); }), "stencil replay refuses stages with side effects, clocks, subgroup dependencies or primitive ID inputs");
+        if (!std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe && (shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Fragment); })) {
+            std::string stages;
+            for (const auto& shader : shaders) {
+                char line[96];
+                std::snprintf(line, sizeof(line), " stage %d safe %d variant 0x%llx;", static_cast<int>(shader.stage), shader.program != nullptr && shader.program->stencilReplaySafe, shader.program != nullptr ? static_cast<unsigned long long>(shader.program->variantId) : 0ull);
+                stages += line;
+            }
+            throw std::runtime_error("AGC graphics: stencil replay refuses stages with side effects, clocks, subgroup dependencies or primitive ID inputs [diag" + stages + "]");
+        }
         if (stencilReferences.size() == 256u) {
             static std::once_flag unbounded;
             std::call_once(unbounded, [] { APS5_LOG_CHARS_OUT("Stencil replay: a draw replays all 256 stencil reference values because its pixel shader's export is not bounded, recording 256 passes per triangle and instance"); });
@@ -3510,6 +3536,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(!selectedPipeline->SplitsFaces() && !selectedPipeline->SplitsSecondChannel(), "stencil replay refuses pipeline face or channel splits");
         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
     }
+    if (!stencilReplay.empty() && stencilReplay.size() > 1u && pipelineState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && pipelineState.cullMode != VK_CULL_MODE_NONE) {
+        auto reversed = pipelineState;
+        reversed.stencilReplayReference = stencilReplay.front().first;
+        reversed.stencilFront.reference = stencilReplay.front().first;
+        reversed.stencilBack.reference = stencilReplay.front().first;
+        reversed.frontFace = pipelineState.frontFace == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+        prepared.stencilReplayFlipped = CachedPipeline(context, reversed, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
     auto& pipeline = prepared.pipeline;
     const auto attachmentLayout = lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     if (!stencilReplay.empty()) {
@@ -3628,6 +3662,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         record.completion = completion;
         record.waited = outcome.waited;
         record.stencilReplay = stencilReplay;
+        record.stencilReplayFlipped = prepared.stencilReplayFlipped;
         record.reordered = reordered;
         record.reorderPass = reorderPass;
         record.depthLocations = depthLocations;
@@ -3786,7 +3821,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     std::uint32_t subdraw = 0;
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
-        recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
+        recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources, prepared.stencilReplayFlipped);
+        if (recorded && prepared.stencilReplayFlipped != nullptr) recorder->Keep(prepared.stencilReplayFlipped);
         if (recorded) for (const auto& [reference, selectedPipeline] : stencilReplay) recorder->Keep(selectedPipeline);
     }
     if (pipeline->SplitsFaces()) {
