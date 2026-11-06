@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILER_IMAGETABLEABI_HPP
 
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -9,6 +10,7 @@
 namespace ShaderRecompiler::ImageTableAbi {
 
 inline std::atomic<std::uint64_t> DiagUsageAddress{0};
+inline bool DiagUsageEnabled() { static const bool enabled = std::getenv("APS5_DIAG_TABLE_USAGE") != nullptr; return enabled; }
 inline std::atomic<std::uint32_t> DiagUsageWords{0};
 inline std::atomic<std::uint64_t> DiagUsageEmitted{0};
 inline std::atomic<std::uint64_t> DiagTableAccesses{0};
@@ -23,7 +25,9 @@ inline constexpr std::uint32_t HeaderPoisonCount = 4;
 inline constexpr std::uint32_t HeaderElementFaults = 5;
 inline constexpr std::uint32_t HeaderSamplerFaults = 6;
 inline constexpr std::uint32_t HeaderTableCount = 7;
-inline constexpr std::uint32_t HeaderWords = 8;
+inline constexpr std::uint32_t HeaderUsageLow = 8;
+inline constexpr std::uint32_t HeaderUsageHigh = 9;
+inline constexpr std::uint32_t HeaderWords = 10;
 
 inline constexpr std::uint32_t TableMapStart = 0;
 inline constexpr std::uint32_t TableKeyCount = 1;

@@ -169,7 +169,7 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool diagUsage = ImageTableAbi::DiagUsageAddress.load() != 0 && std::any_of(program.Info().images.begin(), program.Info().images.end(), [](const auto& image) { return image.table != NoTable; });
+    const bool diagUsage = ImageTableAbi::DiagUsageEnabled() && std::any_of(program.Info().images.begin(), program.Info().images.end(), [](const auto& image) { return image.table != NoTable; });
     const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || diagUsage;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);

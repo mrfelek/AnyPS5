@@ -2375,6 +2375,10 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             table.set = splitSets && table.stage == ShaderRecompiler::ShaderStage::Fragment ? 1u : 0u;
             table.elementBase = tableElements[table.set];
             table.map[ShaderRecompiler::ImageTableAbi::HeaderElementBase] = table.elementBase;
+            if (const auto usage = ShaderRecompiler::ImageTableAbi::DiagUsageAddress.load(); usage != 0) {
+                table.map[ShaderRecompiler::ImageTableAbi::HeaderUsageLow] = static_cast<std::uint32_t>(usage);
+                table.map[ShaderRecompiler::ImageTableAbi::HeaderUsageHigh] = static_cast<std::uint32_t>(usage >> 32u);
+            }
             tableElements[table.set] += elements;
             if (table.sampled) tableFlags[table.set] |= VulkanStage(table.stage);
             if (table.storage) storageTableFlags[table.set] |= VulkanStage(table.stage);

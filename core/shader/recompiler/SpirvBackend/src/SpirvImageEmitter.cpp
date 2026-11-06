@@ -2280,7 +2280,11 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, state.tableAccess.element);
         state.tableAccess.dword3 = dword3;
         ImageTableAbi::DiagTableAccesses.fetch_add(1);
-        if (const auto diag = ImageTableAbi::DiagUsageAddress.load(); diag != 0) {
+        if (ImageTableAbi::DiagUsageEnabled()) {
+            const auto u64 = TypeScalarU64(state);
+            const auto diagLow = Unary(state, spv::OpUConvert, u64, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderUsageLow)));
+            const auto diagHigh = Unary(state, spv::OpUConvert, u64, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderUsageHigh)));
+            const auto diagBase = Binary(state, spv::OpBitwiseOr, u64, diagLow, Binary(state, spv::OpShiftLeftLogical, u64, diagHigh, ConstantU32(state, 32u)));
             ImageTableAbi::DiagUsageEmitted.fetch_add(1);
             const auto words = ImageTableAbi::DiagUsageWords.load();
             const auto read = both(exec, result.valid);
@@ -2290,12 +2294,12 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
             const auto wordIndex = Select(state, u32, inside, shifted, ConstantU32(state, words));
             const auto bit = Select(state, u32, inside, Binary(state, spv::OpShiftLeftLogical, u32, ConstantU32(state, 1u), Binary(state, spv::OpBitwiseAnd, u32, absolute, ConstantU32(state, 31u))), ConstantU32(state, 0u));
             const auto offset = Unary(state, spv::OpUConvert, TypeScalarU64(state), Binary(state, spv::OpShiftLeftLogical, u32, wordIndex, ConstantU32(state, 2u)));
-            const auto address = Binary(state, spv::OpIAdd, TypeScalarU64(state), BdaConstant(state, diag), offset);
+            const auto address = Binary(state, spv::OpIAdd, TypeScalarU64(state), diagBase, offset);
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), pointer, address);
             state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), bit);
             const auto countPointer = state.module.AllocateId();
-            state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), countPointer, BdaConstant(state, diag + 4ull * (words + 1u)));
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), countPointer, Binary(state, spv::OpIAdd, u64, diagBase, BdaConstant(state, 4ull * (words + 1u))));
             state.module.AddFunction(spv::OpAtomicIAdd, u32, state.module.AllocateId(), countPointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), Select(state, u32, read, ConstantU32(state, 65536u), ConstantU32(state, 1u)));
         }
     }
