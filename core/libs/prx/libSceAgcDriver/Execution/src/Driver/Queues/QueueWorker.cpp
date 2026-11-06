@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -281,7 +282,19 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
+                        const auto holdStart = std::chrono::steady_clock::now();
+                        bool holdReported = false;
+                        while (!released() && !poll(released)) {
+                            stall.Check("order behind queue 0 for event", submission.received);
+                            if (!holdReported && std::chrono::steady_clock::now() - holdStart > std::chrono::seconds(2)) {
+                                holdReported = true;
+                                const auto awaited = queue0Awaited.load(std::memory_order_acquire);
+                                std::fprintf(stderr, "[diag-order] queue 0x%x serial %llu held 2 s behind queue 0: queue0Before %d, queue0 awaits 0x%llx, own pending writes contain it %d (%zu pending write dwords), running workers %u, completions pending %d, queue0Executing %llu, received %llu\n",
+                                    id, static_cast<unsigned long long>(submission.serial), queue0Before(submission.received) ? 1 : 0, static_cast<unsigned long long>(awaited),
+                                    workers.at(id).unfinishedWrites.contains(awaited & ~std::uint64_t{3}) ? 1 : 0, workers.at(id).unfinishedWrites.size(), runningWorkers.load(), completionsPending() ? 1 : 0,
+                                    static_cast<unsigned long long>(queue0Executing), static_cast<unsigned long long>(submission.received));
+                            }
+                        }
                     }
                     rethrowFailure();
                 }
