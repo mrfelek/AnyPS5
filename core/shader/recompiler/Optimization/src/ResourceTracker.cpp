@@ -864,6 +864,7 @@ private:
         return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
             if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
             if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
+            if (rereadable && std::getenv("APS5_EXP_DESCRIPTOR_DATA") != nullptr) return true;
             return rereadable && ChildKeyWord(*read, vsharp);
         });
     }
@@ -1307,6 +1308,14 @@ private:
                     if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
                     continue;
                 }
+                if (std::getenv("APS5_EXP_FOREIGN_RECORDS") != nullptr && !lowReads.empty()) {
+                    std::uint32_t foreignMemory = 0;
+                    const MemoryInfo* foreign = ScalarReadMemory(*lowWord, foreignMemory);
+                    if (foreign != nullptr && std::ranges::find(lowReads, lowWord) == lowReads.end() && !SameRecordColumn(*lowReads.back(), *lowWord)) {
+                        if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] skipped a record pointer from another table at offset %u\n", foreign->offset);
+                        continue;
+                    }
+                }
                 if (!PointerRecordRead(*lowWord, lowReads)) { if (std::getenv("APS5_DIAG_CHASE")) { std::uint32_t mi = 0; const MemoryInfo* bm = ScalarReadMemory(*lowWord, mi); const MemoryInfo* am = ScalarAddressMemory(*lowWord, mi); std::fprintf(stderr, "[diag-chase] refuse %d low=%s args=%u boff=%d aoff=%d arg0=%s reads=%zu\n", __LINE__, IrOpcodeName(lowWord->Opcode()).data(), unsigned(lowWord->ArgumentCount()), bm ? int(bm->offset) : -1, am ? int(am->offset) : -1, lowWord->ArgumentCount() ? IrOpcodeName(lowWord->Argument(0)->Resolve()->Opcode()).data() : "-", lowReads.size()); } return false; }
                 if (highWord->IsPhi()) {
                     for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
@@ -1354,7 +1363,7 @@ private:
             if (!depth.has_value()) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
             chaseDepth = std::max(chaseDepth, *depth);
         }
-        if (chaseDepth > MaxPointerChaseDepth) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
+        if (chaseDepth > MaxPointerChaseDepth) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d depth %u sites %zu\n", __LINE__, chaseDepth, sites.size()); return false; }
         chases.clear();
         for (const auto& known : sites) {
             if (std::ranges::find(chases, known.chase) == chases.end()) chases.push_back(known.chase);
