@@ -56,6 +56,9 @@ struct PointerChase {
     std::uint32_t readImmediate = 0;
     std::uint32_t readHighImmediate = 0;
     std::array<DescriptorWordEdit, 4> edits {};
+    // 1: the next pointer is loaded straight through the current one, its low word at
+    // (offset, immediate) and its high word at (offset, readHighImmediate); no V# in between.
+    std::uint32_t direct = 0;
 
     bool operator==(const PointerChase& other) const = default;
 };

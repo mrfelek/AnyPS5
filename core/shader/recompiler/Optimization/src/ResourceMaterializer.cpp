@@ -1138,6 +1138,14 @@ private:
     }
 
     std::optional<std::uint64_t> Chase(std::uint64_t pointer, const PointerChase& chase) {
+        if (chase.direct != 0u) {
+            const auto low = ImageTableAbi::ScalarAddressDword(pointer, chase.offset, chase.immediate);
+            const auto high = ImageTableAbi::ScalarAddressDword(pointer, chase.offset, chase.readHighImmediate);
+            if (!low.has_value() || !high.has_value() || (*low & 3u) != 0u || (*high & 3u) != 0u || !AddressAccessible(*low) || !AddressAccessible(*high)) return std::nullopt;
+            tables.ranges.emplace_back(*low, sizeof(std::uint32_t));
+            tables.ranges.emplace_back(*high, sizeof(std::uint32_t));
+            return (static_cast<std::uint64_t>(Read(*high)) << 32u) | Read(*low);
+        }
         DescriptorValue descriptor;
         descriptor.dwordCount = 4u;
         for (std::uint32_t dword = 0; dword < 4u; dword++) {

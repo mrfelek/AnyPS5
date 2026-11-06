@@ -1188,6 +1188,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
             chases.Value(chase.readHighImmediate);
+            chases.Value(chase.direct);
             for (const auto& edit : chase.edits) {
                 chases.Value(edit.shift);
                 chases.Value(edit.mask);
@@ -1370,6 +1371,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
             chases.Value(chase.readHighImmediate);
+            chases.Value(chase.direct);
             for (auto& edit : chase.edits) {
                 chases.Value(edit.shift);
                 chases.Value(edit.mask);

@@ -1142,7 +1142,20 @@ private:
         const MemoryInfo* info = ScalarReadMemory(read, memory);
         if (info == nullptr || !MemoryIndexBelongsTo(memory, read)) return false;
         if (std::ranges::find(reads, &read) != reads.end()) return true;
-        if (!reads.empty() && (ScalarReadMemory(*reads.back(), memory)->offset != info->offset || !SameRecordColumn(*reads.back(), read))) return false;
+        if (!reads.empty() && (ScalarReadMemory(*reads.back(), memory)->offset != info->offset || !SameRecordColumn(*reads.back(), read))) {
+            if (std::getenv("APS5_DIAG_CHASE")) {
+                IrValue* k1 = nullptr; IrValue* k2 = nullptr; std::uint32_t s1 = 0, a1 = 0, s2 = 0, a2 = 0;
+                const bool m1 = MatchAffineOffset(reads.back()->Argument(1), k1, s1, a1);
+                const bool m2 = MatchAffineOffset(read.Argument(1), k2, s2, a2);
+                std::fprintf(stderr, "[diag-chase] record mismatch: offsets %u/%u sameHandle=%d affine=%d/%d stride=%u/%u addend=%u/%u off1=%s off2=%s h2=%s\n",
+                    ScalarReadMemory(*reads.back(), memory)->offset, info->offset,
+                    int(EquivalentValue(m_program.Resources(), reads.back()->Argument(0), read.Argument(0))), int(m1), int(m2), s1, s2, a1, a2,
+                    IrOpcodeName(reads.back()->Argument(1)->Resolve()->Opcode()).data(), IrOpcodeName(read.Argument(1)->Resolve()->Opcode()).data(),
+                    IrOpcodeName(read.Argument(0)->Resolve()->Opcode()).data());
+                std::fprintf(stderr, "[diag-chase]   first: %s\n[diag-chase]   second: %s\n", describeValueChain(reads.back(), 4u).c_str(), describeValueChain(&read, 4u).c_str());
+            }
+            return false;
+        }
         reads.push_back(&read);
         return true;
     }
@@ -1199,6 +1212,26 @@ private:
         return true;
     }
 
+    // A 64-bit pointer loaded straight through another pointer: the low word is an address load at an
+    // immediate offset of GetAddressResource(P), the high word the same load at another 4-aligned immediate.
+    bool DirectChaseRead(IrValue& read, IrValue*& pointer, std::uint32_t& offset, std::uint32_t& immediate) const {
+        std::uint32_t memoryIndex = 0;
+        const MemoryInfo* memory = ScalarAddressMemory(read, memoryIndex);
+        if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, read) || !immediateU32(read.Argument(1), offset)) return false;
+        pointer = read.Argument(0)->Resolve();
+        immediate = memory->offset;
+        return pointer->Opcode() == IrOpcode::GetAddressResource && pointer->ArgumentCount() == 2u && immediate % sizeof(std::uint32_t) == 0u;
+    }
+
+    std::optional<std::uint32_t> DirectChaseHighRead(IrValue& read, const IrValue& pointer, std::uint32_t offset, std::uint32_t immediate) const {
+        IrValue* highPointer = nullptr;
+        std::uint32_t highOffset = 0;
+        std::uint32_t highImmediate = 0;
+        if (!DirectChaseRead(read, highPointer, highOffset, highImmediate) || (highPointer != &pointer && !EquivalentValue(m_program.Resources(), &pointer, highPointer))) return std::nullopt;
+        if (highOffset != offset || highImmediate == immediate) return std::nullopt;
+        return highImmediate;
+    }
+
     std::optional<std::uint32_t> ChaseHighRead(IrValue& read, const IrValue& handle, std::uint32_t readOffset, std::uint32_t readImmediate) const {
         IrValue* highHandle = nullptr;
         std::uint32_t highOffset = 0;
@@ -1229,8 +1262,8 @@ private:
                     const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
                     for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
                         IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
-                        if (edge == nullptr) return false;
-                        if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
+                        if (edge == nullptr) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
+                        if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
                         pending.emplace_back(lowWord->Argument(index), edge);
                     }
                     continue;
@@ -1244,19 +1277,32 @@ private:
                 PointerChase chase;
                 std::uint32_t looseOffset = 0;
                 std::uint32_t looseImmediate = 0;
+                if (std::getenv("APS5_EXP_DIRECT_CHASE") != nullptr && DirectChaseRead(*lowWord, pointer, chase.offset, chase.immediate)) {
+                    if (highWord->IsPhi()) {
+                        for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
+                        continue;
+                    }
+                    const auto highImmediate = DirectChaseHighRead(*highWord, *pointer, chase.offset, chase.immediate);
+                    if (!highImmediate.has_value()) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
+                    chase.readHighImmediate = *highImmediate;
+                    chase.direct = 1u;
+                    const auto index = site(*pointer, *pointer, chase);
+                    if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
+                    continue;
+                }
                 if (ChaseRead(*lowWord, handle, chase.readOffset, chase.readImmediate) && ChaseVsharp(*handle, pointer, chase)) {
                     if (highWord->IsPhi()) {
                         for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
                         continue;
                     }
                     const auto highImmediate = ChaseHighRead(*highWord, *handle, chase.readOffset, chase.readImmediate);
-                    if (!highImmediate.has_value()) return false;
+                    if (!highImmediate.has_value()) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
                     chase.readHighImmediate = *highImmediate;
                     const auto index = site(*handle, *pointer, chase);
                     if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
                     continue;
                 }
-                if (!PointerRecordRead(*lowWord, lowReads)) return false;
+                if (!PointerRecordRead(*lowWord, lowReads)) { if (std::getenv("APS5_DIAG_CHASE")) { std::uint32_t mi = 0; const MemoryInfo* bm = ScalarReadMemory(*lowWord, mi); const MemoryInfo* am = ScalarAddressMemory(*lowWord, mi); std::fprintf(stderr, "[diag-chase] refuse %d low=%s args=%u boff=%d aoff=%d arg0=%s reads=%zu\n", __LINE__, IrOpcodeName(lowWord->Opcode()).data(), unsigned(lowWord->ArgumentCount()), bm ? int(bm->offset) : -1, am ? int(am->offset) : -1, lowWord->ArgumentCount() ? IrOpcodeName(lowWord->Argument(0)->Resolve()->Opcode()).data() : "-", lowReads.size()); } return false; }
                 if (highWord->IsPhi()) {
                     for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
                 } else if (IrValue* word = MaskedRecordWord(*highWord)) {
@@ -1266,21 +1312,21 @@ private:
                 } else if (IrValue* highHandle = nullptr; ChaseRead(*highWord, highHandle, looseOffset, looseImmediate)) {
                     looseHandles.push_back(highHandle);
                 } else {
-                    return false;
+                    { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
                 }
             }
             return true;
         };
         std::vector<std::size_t> roots;
-        if (!walk(low, high, roots)) return false;
+        if (!walk(low, high, roots)) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
         for (std::size_t index = 0; index < sites.size(); ++index) {
             std::vector<std::size_t> inner;
-            if (!walk(sites[index].pointer->Argument(0), sites[index].pointer->Argument(1), inner)) return false;
+            if (!walk(sites[index].pointer->Argument(0), sites[index].pointer->Argument(1), inner)) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
             sites[index].inner = std::move(inner);
         }
         if (!std::ranges::all_of(looseHandles, [&](const IrValue* handle) {
             return std::ranges::any_of(sites, [&](const ChaseSite& known) { return known.handle == handle || EquivalentValue(m_program.Resources(), known.handle, handle); });
-        })) return false;
+        })) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
         std::vector<std::uint32_t> depths(sites.size(), 0u);
         std::vector<std::uint8_t> states(sites.size(), 0u);
         const auto depthOf = [&](const auto& self, std::size_t index) -> std::optional<std::uint32_t> {
@@ -1300,10 +1346,10 @@ private:
         chaseDepth = 0;
         for (const auto root : roots) {
             const auto depth = depthOf(depthOf, root);
-            if (!depth.has_value()) return false;
+            if (!depth.has_value()) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
             chaseDepth = std::max(chaseDepth, *depth);
         }
-        if (chaseDepth > MaxPointerChaseDepth) return false;
+        if (chaseDepth > MaxPointerChaseDepth) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
         chases.clear();
         for (const auto& known : sites) {
             if (std::ranges::find(chases, known.chase) == chases.end()) chases.push_back(known.chase);
