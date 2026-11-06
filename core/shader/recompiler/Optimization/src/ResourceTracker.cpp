@@ -26,6 +26,9 @@
 #include <vector>
 
 namespace ShaderRecompiler {
+thread_local const void* DiagColumnHandle = nullptr;
+thread_local std::unordered_map<const void*, std::vector<int>> DiagColumnByHandle;
+inline void DiagColumnFail(int line) { auto& v = DiagColumnByHandle[DiagColumnHandle]; if (v.size() < 32) v.push_back(line); }
 namespace {
 
 constexpr std::uint32_t samplerBorderClampMask = (1u << 2u) | (1u << 5u) | (1u << 8u);
@@ -875,10 +878,11 @@ private:
     }
 
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
+        if (!buffer) DiagColumnHandle = &handle;
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
         if (handle.Opcode() != expected || handle.ArgumentCount() != width) {
-            return false;
+            { DiagColumnFail(__LINE__); return false; }
         }
         std::uint32_t words = width;
         if (!sampler && r128) {
@@ -903,12 +907,12 @@ private:
         bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
             IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
-            if (read == nullptr) return false;
+            if (read == nullptr) { DiagColumnFail(__LINE__); return false; }
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
             std::uint32_t readAddend = 0;
             IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
@@ -927,23 +931,23 @@ private:
                 baseAddend = readAddend;
                 laneBase = ParseFirstLaneOffset(read->Argument(1)->Resolve(), nullptr, baseLane, phiSearchDepth) && baseLane.addend == baseAddend;
             } else if (addressRead != address || memory->offset + readAddend != first + baseAddend + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t))) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             } else if (readAddend != baseAddend) {
                 if (readAddend < baseAddend || static_cast<std::uint64_t>(memory->offset) + (readAddend - baseAddend) > 0x7fffffffu) {
-                    return false;
+                    { DiagColumnFail(__LINE__); return false; }
                 }
                 folded = true;
                 carry = std::max(carry, readAddend - baseAddend);
             }
             IrValue* currentHandle = read->Argument(0)->Resolve();
             if (heapHandle != nullptr && currentHandle != heapHandle && !EquivalentValue(m_program.Resources(), heapHandle, currentHandle)) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
             if (heapHandle == nullptr) heapHandle = currentHandle;
             if (dword == 0u) {
                 offset = read->Argument(1)->Resolve();
             } else if (!sameBase) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
             plan.memory.push_back(memoryIndex);
             plan.reads.push_back(read);
@@ -953,7 +957,7 @@ private:
             MakeSource(handle, width, false, false, direct);
             std::uint32_t badDword = 0;
             if (ValidateSource(direct, badDword)) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
         }
         IrValue* key = nullptr;
@@ -972,36 +976,37 @@ private:
             addend = fixedOffset;
         } else if (!MatchAffineOffset(offset, key, stride, addend)) {
             if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
             masked = true;
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
-            if (fixed) return false;
+            if (fixed) { DiagColumnFail(__LINE__); return false; }
         } else {
-            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) { DiagColumnFail(__LINE__); return false; }
             const auto sameHandle = [&](const IrValue* user) {
-                if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
+                if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) { DiagColumnFail(__LINE__); return false; }
                 for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
-                    if (user->Argument(argument)->Resolve() != handle.Argument(argument)->Resolve()) return false;
+                    if (user->Argument(argument)->Resolve() != handle.Argument(argument)->Resolve()) { DiagColumnFail(__LINE__); return false; }
                 }
                 return true;
             };
             const bool otherUsers = !std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); });
             TableColumnPlan parent;
-            if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
-            if (parent.parentPointer == nullptr) return false;
+            if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) { DiagColumnFail(__LINE__); return false; }
+            if (parent.parentPointer == nullptr) { DiagColumnFail(__LINE__); return false; }
             const bool rereadable = RereadableVsharp(*heapHandle, parent);
-            if (otherUsers && !rereadable) return false;
+            if (otherUsers && !rereadable) { DiagColumnFail(__LINE__); return false; }
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    if (user->Opcode() != IrOpcode::GetBufferResource) return false;
+                    if (user->Opcode() == IrOpcode::Phi && std::getenv("APS5_EXP_DIRECT_CHASE") != nullptr) return true;  // the word also feeds a chased pointer (linked records)
+                    if (user->Opcode() != IrOpcode::GetBufferResource) { DiagColumnFail(__LINE__); return false; }
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
                     return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
                 });
-            })) return false;
+            })) { DiagColumnFail(__LINE__); return false; }
             heapIndex = parent.source;
             heapSource = m_sources[heapIndex];
             plan.parentPointer = parent.parentPointer;
@@ -1462,14 +1467,14 @@ private:
                 const MemoryInfo* memory = ScalarAddressMemory(*read, memoryIndex);
                 std::uint32_t readOffset = 0;
                 if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read) || !immediateU32(read->Argument(1), readOffset)) {
-                    return false;
+                    { DiagColumnFail(__LINE__); return false; }
                 }
                 IrValue* readPointer = read->Argument(0)->Resolve();
                 if (dword == 0u) {
                     hop = PointerHop{readOffset, memory->offset};
                     next = readPointer;
                 } else if (readOffset != hop.offset || memory->offset != hop.immediate + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (readPointer != next && !EquivalentValue(m_program.Resources(), next, readPointer))) {
-                    return false;
+                    { DiagColumnFail(__LINE__); return false; }
                 }
                 plan.hopMemory.push_back(memoryIndex);
                 plan.hopReads.push_back(read);
@@ -1478,39 +1483,39 @@ private:
             pointer = next;
         }
         if (pointer->Opcode() != IrOpcode::GetAddressResource || pointer->ArgumentCount() != 2u) {
-            return false;
+            { DiagColumnFail(__LINE__); return false; }
         }
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
         const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
         const bool pointerKeyed = merged && !buffer;
-        if (!hops.empty() && buffer) return false;
+        if (!hops.empty() && buffer) { DiagColumnFail(__LINE__); return false; }
         std::vector<IrValue*> lowReads;
         std::vector<IrValue*> highReads;
         std::vector<PointerChase> chases;
         std::uint32_t chaseDepth = 0;
-        if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads, chases, chaseDepth)) return false;
+        if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads, chases, chaseDepth)) { DiagColumnFail(__LINE__); return false; }
         const auto same = [&](const std::vector<IrValue*>& reads) { return std::ranges::all_of(reads, [&](const IrValue* read) { return EquivalentValue(m_program.Resources(), read, reads.front()); }); };
-        if (merged && buffer && (!same(lowReads) || !same(highReads))) return false;
+        if (merged && buffer && (!same(lowReads) || !same(highReads))) { DiagColumnFail(__LINE__); return false; }
         auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
-        if (low == nullptr) return false;
+        if (low == nullptr) { DiagColumnFail(__LINE__); return false; }
         auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : merged ? highReads.back() : UnwrapTableRead(pointer->Argument(1));
-        if (high == nullptr) return false;
+        if (high == nullptr) { DiagColumnFail(__LINE__); return false; }
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
             IrValue* read = dword == 0u ? low : merged ? highReads.back() : high;
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
             if (dword == 0u) {
                 first = memory->offset;
                 bufferHandle = read->Argument(0)->Resolve();
                 offset = read->Argument(1)->Resolve();
             } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (pointerKeyed ? !SameRecordColumn(*low, *read) : read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1)))) {
-                return false;
+                { DiagColumnFail(__LINE__); return false; }
             }
         }
         IrValue* recordOffset = offset;
@@ -1521,11 +1526,11 @@ private:
                 const auto found = std::ranges::find_if(lowReads, [&](const IrValue* read) {
                     const IrValue* table = read->Argument(0)->Resolve();
                     for (std::size_t index = 0; index < table->ArgumentCount(); ++index) {
-                        if (!Precedes(table->Argument(index), handle)) return false;
+                        if (!Precedes(table->Argument(index), handle)) { DiagColumnFail(__LINE__); return false; }
                     }
                     return true;
                 });
-                if (found == lowReads.end()) return false;
+                if (found == lowReads.end()) { DiagColumnFail(__LINE__); return false; }
                 source = *found;
             }
             bufferHandle = source->Argument(0)->Resolve();
@@ -1533,18 +1538,18 @@ private:
             offset = source == high ? recordOffset : high;
         }
         if (!AvailableAt(offset, handle.Parent())) {
-            return false;
+            { DiagColumnFail(__LINE__); return false; }
         }
         IrValue* key = nullptr;
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
         if (!MatchAffineOffset(recordOffset, key, stride, addend)) {
-            return false;
+            { DiagColumnFail(__LINE__); return false; }
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (!MakeRuntimeSource(*bufferHandle, IrOpcode::GetBufferResource, 4u, heapIndex, heapSource)) {
-            return false;
+            { DiagColumnFail(__LINE__); return false; }
         }
         TableColumn column;
         column.heapSource = heapIndex;
@@ -2702,7 +2707,7 @@ private:
         MakeSource(*handle, width, sampler, sampleAdjust, descriptor);
         std::uint32_t badDword = 0;
         if (!ValidateSource(descriptor, badDword)) {
-            fail(std::string(IrOpcodeName(expected)) + " dword " + std::to_string(badDword) + " is not a valid runtime value; chain: " + describeValueChain(descriptor.dwords[badDword], 8u) + SplitFailure(*handle));
+            fail(std::string(IrOpcodeName(expected)) + " dword " + std::to_string(badDword) + " is not a valid runtime value" + [&] { std::string t = " [diag column fails:"; if (const auto f = DiagColumnByHandle.find(handle); f != DiagColumnByHandle.end()) for (const auto l : f->second) t += " " + std::to_string(l); else t += " (none for this handle)"; return t + "]"; }() + "; chain: " + describeValueChain(descriptor.dwords[badDword], 8u) + SplitFailure(*handle));
         }
         source = InternSource(descriptor);
     }
