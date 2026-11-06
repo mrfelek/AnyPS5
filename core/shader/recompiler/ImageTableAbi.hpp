@@ -15,7 +15,7 @@ inline std::atomic<std::uint32_t> DiagUsageWords{0};
 inline std::atomic<std::uint64_t> DiagUsageEmitted{0};
 inline std::atomic<std::uint64_t> DiagTableAccesses{0};
 
-inline constexpr std::uint32_t Version = 3;
+inline constexpr std::uint32_t Version = 4;
 
 inline constexpr std::uint32_t HeaderVersion = 0;
 inline constexpr std::uint32_t HeaderElementBase = 1;
