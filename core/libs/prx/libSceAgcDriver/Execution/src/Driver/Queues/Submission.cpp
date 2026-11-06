@@ -656,6 +656,8 @@ bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
     const auto awaited = queue0Awaited.load(std::memory_order_acquire);
     if (awaited == 0) return false;
     if (workers.at(queue).unfinishedWrites.contains(awaited & ~std::uint64_t{3})) return true;
+    static const bool releaseUnwritten = std::getenv("APS5_EXP_RELEASE_UNWRITTEN") != nullptr;
+    if (releaseUnwritten && std::none_of(workers.begin(), workers.end(), [&](const auto& item) { return item.second.unfinishedWrites.contains(awaited & ~std::uint64_t{3}); })) return true;
     return runningWorkers.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
 }
 
