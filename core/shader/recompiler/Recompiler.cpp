@@ -61,6 +61,7 @@
 #include <ControlFlow/RequestSerializer.hpp>
 
 namespace ShaderRecompiler {
+extern thread_local std::uint64_t ExpShaderAddress;
 
 namespace {
 
@@ -279,6 +280,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         embeddedFetch = EmbeddedVertexFetchAnalyzer{}.Analyze(decoded, inputInfo.vertex->fetchAttribReg, inputInfo.vertex->fetchBufferReg, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize);
         translateOptions.embeddedFetch = &embeddedFetch;
     }
+    ExpShaderAddress = request.shader.codeAddress;
     auto program = translator.Translate(decoded, cfg, translateOptions);
     // Debug aid: APS5_DUMP_IR=<hex code address> (or "all") prints the program after each front-end pass.
     const auto dumpIr = [&](const char* pass) {
@@ -563,6 +565,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
 }
 
 std::shared_ptr<const IrResourcePlan> acquirePlan(const RecompileRequest& request, const std::shared_ptr<SourceEntry>& source, bool runtimeCapture, const SourceHandle* preparedHandle = nullptr) {
+    ExpShaderAddress = request.shader.codeAddress;
     for (;;) {
         {
             std::lock_guard lock(source->mutex);
@@ -1578,6 +1581,7 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
 }
 
 RecompileResult RecompileImpl(const RecompileRequest& request) {
+    ExpShaderAddress = request.shader.codeAddress;
     auto current = request;
     while (true) {
         try {
@@ -2063,6 +2067,7 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
 // The capture already resolved the source entry (stage input validation included) and materialized
 // the request over exactly the words the driver captured, so neither is repeated here.
 std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
+    ExpShaderAddress = request.shader.codeAddress;
     if (!request.useCache || capture.source == nullptr) {
         auto program = PrepareResourceProgram(request);
         const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });

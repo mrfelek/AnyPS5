@@ -26,6 +26,13 @@
 #include <vector>
 
 namespace ShaderRecompiler {
+thread_local std::uint64_t ExpShaderAddress = 0;
+inline bool ExpOn(const char* name) {
+    if (std::getenv(name) == nullptr) return false;
+    const char* only = std::getenv("APS5_EXP_ONLY");
+    if (std::getenv("APS5_DIAG_EXP")) { static thread_local std::uint64_t last = 1; if (last != ExpShaderAddress) { last = ExpShaderAddress; std::fprintf(stderr, "[diag-exp] shader 0x%llx\n", (unsigned long long)ExpShaderAddress); } }
+    return only == nullptr || std::strtoull(only, nullptr, 16) == ExpShaderAddress;
+}
 thread_local const void* DiagColumnHandle = nullptr;
 thread_local std::unordered_map<const void*, std::vector<int>> DiagColumnByHandle;
 inline void DiagColumnFail(int line) { auto& v = DiagColumnByHandle[DiagColumnHandle]; if (v.size() < 32) v.push_back(line); }
@@ -864,7 +871,7 @@ private:
         return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
             if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
             if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
-            if (rereadable && std::getenv("APS5_EXP_DESCRIPTOR_DATA") != nullptr) return true;
+            if (rereadable && ExpOn("APS5_EXP_DESCRIPTOR_DATA")) return true;
             return rereadable && ChildKeyWord(*read, vsharp);
         });
     }
@@ -1002,7 +1009,7 @@ private:
             if (otherUsers && !rereadable) { DiagColumnFail(__LINE__); return false; }
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    if (user->Opcode() == IrOpcode::Phi && std::getenv("APS5_EXP_DIRECT_CHASE") != nullptr) return true;  // the word also feeds a chased pointer (linked records)
+                    if (user->Opcode() == IrOpcode::Phi && ExpOn("APS5_EXP_DIRECT_CHASE")) return true;  // the word also feeds a chased pointer (linked records)
                     if (user->Opcode() != IrOpcode::GetBufferResource) { DiagColumnFail(__LINE__); return false; }
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
                     return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
@@ -1283,7 +1290,7 @@ private:
                 PointerChase chase;
                 std::uint32_t looseOffset = 0;
                 std::uint32_t looseImmediate = 0;
-                if (std::getenv("APS5_EXP_DIRECT_CHASE") != nullptr && DirectChaseRead(*lowWord, pointer, chase.offset, chase.immediate)) {
+                if (ExpOn("APS5_EXP_DIRECT_CHASE") && DirectChaseRead(*lowWord, pointer, chase.offset, chase.immediate)) {
                     if (highWord->IsPhi()) {
                         for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
                         continue;
@@ -1308,7 +1315,7 @@ private:
                     if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
                     continue;
                 }
-                if (std::getenv("APS5_EXP_FOREIGN_RECORDS") != nullptr && !lowReads.empty()) {
+                if (ExpOn("APS5_EXP_FOREIGN_RECORDS") && !lowReads.empty()) {
                     std::uint32_t foreignMemory = 0;
                     const MemoryInfo* foreign = ScalarReadMemory(*lowWord, foreignMemory);
                     if (foreign != nullptr && std::ranges::find(lowReads, lowWord) == lowReads.end() && !SameRecordColumn(*lowReads.back(), *lowWord)) {
@@ -1363,7 +1370,7 @@ private:
             if (!depth.has_value()) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d\n", __LINE__); return false; }
             chaseDepth = std::max(chaseDepth, *depth);
         }
-        if (chaseDepth > MaxPointerChaseDepth) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d depth %u sites %zu\n", __LINE__, chaseDepth, sites.size()); return false; }
+        if (chaseDepth > (ExpOn("APS5_EXP_DIRECT_CHASE") ? MaxPointerChaseDepth : 4u)) { if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] refuse %d depth %u sites %zu\n", __LINE__, chaseDepth, sites.size()); return false; }
         chases.clear();
         for (const auto& known : sites) {
             if (std::ranges::find(chases, known.chase) == chases.end()) chases.push_back(known.chase);
