@@ -44,7 +44,7 @@ bool Driver::drawPrecheck() {
 }
 
 std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
-    if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
+    if (!drawParameters.indirect && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
     if (const auto pass = Graphics::DecodeColorMetadataPass(queue)) {
         require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
         if (DrawPipeline::Active() && DrawPipeline::MetadataPassesPipelined() && deferredLabels().labels.empty()) {
