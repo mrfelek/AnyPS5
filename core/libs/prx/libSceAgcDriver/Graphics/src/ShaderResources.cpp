@@ -6061,6 +6061,11 @@ struct DiagTableUsage {
     std::mutex mutex;
     std::unique_ptr<Buffer> buffer;
     std::vector<std::uint32_t> bound;
+    std::vector<std::uint32_t> readAccum;
+    std::vector<std::uint64_t> slotKey;
+    std::unordered_set<std::uint64_t> wanted;
+    std::chrono::steady_clock::time_point collected{};
+    std::uint64_t deferred = 0, borrowed = 0, built = 0, fallback = 0;
     std::int64_t last = 0;
     std::uint64_t dispatches = 0, maxBound = 0;
 };
@@ -6080,9 +6085,51 @@ void DiagUsageInit(const Context& context) {
     usage.buffer = std::make_unique<Buffer>(context, (words + 2u) * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     std::memset(usage.buffer->Bytes().data(), 0, usage.buffer->Bytes().size());
     usage.bound.assign(words, 0u);
+    usage.readAccum.assign(words, 0u);
+    usage.slotKey.assign(static_cast<std::size_t>(words) * 32u, 0u);
     ShaderRecompiler::ImageTableAbi::DiagUsageWords.store(words);
     ShaderRecompiler::ImageTableAbi::DiagUsageAddress.store(usage.buffer->DeviceAddress());
     std::fprintf(stderr, "[diag-tableuse] bitmap of %u words at 0x%llx for %u table slots\n", words, static_cast<unsigned long long>(usage.buffer->DeviceAddress()), context.imageTableCapacity);
+}
+
+bool LazyTablesEnabled() {
+    static const bool enabled = std::getenv("APS5_LAZY_TABLES") != nullptr;
+    return enabled && DiagUsage().buffer != nullptr;
+}
+
+void LazyCollectLocked(DiagTableUsage& usage) {
+    auto* read = reinterpret_cast<std::uint32_t*>(usage.buffer->Bytes().data());
+    for (std::size_t word = 0; word < usage.readAccum.size(); ++word) {
+        if (read[word] == 0u) continue;
+        const auto bits = __atomic_exchange_n(&read[word], 0u, __ATOMIC_RELAXED);
+        usage.readAccum[word] |= bits;
+        for (auto mask = bits; mask != 0u; mask &= mask - 1u) {
+            const auto slot = word * 32u + static_cast<std::size_t>(std::countr_zero(mask));
+            if (usage.slotKey[slot] != 0u) usage.wanted.insert(usage.slotKey[slot]);
+        }
+    }
+}
+
+void LazyCollect() {
+    auto& usage = DiagUsage();
+    std::lock_guard lock(usage.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (now - usage.collected < std::chrono::milliseconds(30)) return;
+    usage.collected = now;
+    LazyCollectLocked(usage);
+}
+
+bool LazyWanted(std::uint64_t absolute, std::uint64_t key) {
+    auto& usage = DiagUsage();
+    std::lock_guard lock(usage.mutex);
+    if (absolute < usage.slotKey.size()) usage.slotKey[absolute] = key;
+    return usage.wanted.contains(key);
+}
+
+void LazyCount(std::uint64_t deferred, std::uint64_t borrowed, std::uint64_t built, std::uint64_t fallback) {
+    auto& usage = DiagUsage();
+    std::lock_guard lock(usage.mutex);
+    usage.deferred += deferred; usage.borrowed += borrowed; usage.built += built; usage.fallback += fallback;
 }
 
 void DiagUsageNote(std::uint32_t elementBase, const std::vector<std::size_t>& elementTextures) {
@@ -6103,9 +6150,11 @@ void DiagUsageNote(std::uint32_t elementBase, const std::vector<std::size_t>& el
     if (now - usage.last < 10) return;
     usage.last = now;
     auto* read = reinterpret_cast<std::uint32_t*>(usage.buffer->Bytes().data());
+    static const bool lazy = std::getenv("APS5_LAZY_TABLES") != nullptr;
+    if (lazy) LazyCollectLocked(usage);
     std::uint64_t bound = 0, used = 0, both = 0, readOnly = 0;
     for (std::size_t word = 0; word < usage.bound.size(); ++word) {
-        const auto r = __atomic_exchange_n(&read[word], 0u, __ATOMIC_RELAXED);
+        const auto r = lazy ? std::exchange(usage.readAccum[word], 0u) : __atomic_exchange_n(&read[word], 0u, __ATOMIC_RELAXED);
         bound += static_cast<std::uint64_t>(std::popcount(usage.bound[word]));
         used += static_cast<std::uint64_t>(std::popcount(r));
         both += static_cast<std::uint64_t>(std::popcount(r & usage.bound[word]));
@@ -6116,6 +6165,8 @@ void DiagUsageNote(std::uint32_t elementBase, const std::vector<std::size_t>& el
     std::fprintf(stderr, "[diag-tableuse] executed counter: %u valid reads (x65536) + %u invalid, dummy word 0x%x\n", executed >> 16u, executed & 0xffffu, read[usage.bound.size()]);
     std::fprintf(stderr, "[diag-tableuse] shader table reads emitted so far: %llu, instrumented %llu\n", static_cast<unsigned long long>(ShaderRecompiler::ImageTableAbi::DiagTableAccesses.load()), static_cast<unsigned long long>(ShaderRecompiler::ImageTableAbi::DiagUsageEmitted.load()));
     std::fprintf(stderr, "[diag-tableuse] 10 s: %llu table resolves, largest %llu bound slots; %llu distinct slots bound, %llu read by shaders (%llu of them bound this window, %llu not)\n", static_cast<unsigned long long>(usage.dispatches), static_cast<unsigned long long>(usage.maxBound), static_cast<unsigned long long>(bound), static_cast<unsigned long long>(used), static_cast<unsigned long long>(both), static_cast<unsigned long long>(readOnly));
+    if (lazy) std::fprintf(stderr, "[lazy-tables] 10 s: %llu entries deferred (%llu borrowed a texture, %llu built at once for lack of a donor), %llu built; %zu descriptors wanted so far\n", static_cast<unsigned long long>(usage.deferred), static_cast<unsigned long long>(usage.borrowed), static_cast<unsigned long long>(usage.fallback), static_cast<unsigned long long>(usage.built), usage.wanted.size());
+    usage.deferred = usage.borrowed = usage.built = usage.fallback = 0;
     usage.dispatches = 0;
     usage.maxBound = 0;
 }
@@ -6124,6 +6175,7 @@ void ShaderResources::resolveImageTables() {
     const auto none = [](const std::array<std::size_t, 2>& set) { return set[0] == std::numeric_limits<std::size_t>::max() && set[1] == std::numeric_limits<std::size_t>::max(); };
     if (none(tableBindings) && none(storageTableBindings)) return;
     DiagUsageInit(context);
+    if (LazyTablesEnabled()) LazyCollect();
     auto& counters = TextureCounts();
     for (std::size_t set = 0; set < tableBindings.size(); ++set) {
         if (storageTableBindings[set] != std::numeric_limits<std::size_t>::max()) bindings[storageTableBindings[set]].imageAllocations.assign(std::min(tableElements[set], StorageTableCapacity(context)), std::numeric_limits<std::size_t>::max());
@@ -6304,6 +6356,14 @@ void ShaderResources::resolveImageTables() {
         }
         std::unordered_map<std::uint32_t, GuestTextureResource> representativeSources;
         std::vector<std::uint32_t> substitutes;
+        struct LazyEntry { std::uint32_t element; std::array<std::uint32_t, 8> words; DecodedEntry decoded; std::uint64_t donorClass; };
+        struct LazySource { SampledEntry sampled; bool firstLayer; };
+        std::vector<LazyEntry> lazyDeferred;
+        std::unordered_map<std::uint64_t, std::uint32_t> lazyDonors;
+        std::unordered_map<std::uint32_t, LazySource> lazySources;
+        std::uint64_t lazyBuilt = 0;
+        const bool lazyTable = LazyTablesEnabled() && binding.count > 64u;
+        const auto donorClassOf = [](const GuestTextureResource& r, ShaderRecompiler::DescriptorImageShape sh, bool dc) { return (static_cast<std::uint64_t>(r.format) << 24u) ^ (static_cast<std::uint64_t>(r.dimension) << 16u) ^ (static_cast<std::uint64_t>(sh) << 8u) ^ static_cast<std::uint64_t>(dc); };
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
             const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
@@ -6367,6 +6427,20 @@ void ShaderResources::resolveImageTables() {
                 reusable = false;
                 continue;
             }
+            if (lazyTable) {
+                std::array<std::uint32_t, 8> narrowed{};
+                const auto keyWords = firstLayerWords(words, binding.imageShapes.at(element), narrowed, false);
+                const bool lazyDepth = binding.imageDepthCompare.at(element);
+                const auto key = hashWords(0x6c617a79u ^ static_cast<std::uint64_t>(lazyDepth), keyWords.data(), keyWords.size()) | 1u;
+                if (!LazyWanted(absolute, key)) {
+                    const auto donorResource = keyWords.data() != words.data() ? DecodeTextureResource(keyWords) : resource;
+                    LazyEntry entry{element, {}, decoded, donorClassOf(donorResource, binding.imageShapes.at(element), lazyDepth)};
+                    std::copy(words.begin(), words.end(), entry.words.begin());
+                    lazyDeferred.push_back(entry);
+                    reusable = false;
+                    continue;
+                }
+            }
             const auto sampled = prepareSampled(element, words, decoded);
             std::shared_ptr<Texture> texture;
             try {
@@ -6389,6 +6463,41 @@ void ShaderResources::resolveImageTables() {
             }
             if (!representativeNeeded.empty() && representativeNeeded[element]) representativeSources.emplace(element, sampled.resource);
             fresh.bound[element] = bind(element, sampled.words, std::move(texture), sampled.resource, sampled.guestBytes, firstLayer);
+            if (lazyTable) {
+                ++lazyBuilt;
+                if (fresh.bound[element].empty()) lazyDonors.try_emplace(donorClassOf(sampled.resource, binding.imageShapes.at(element), sampled.depthCompare), element);
+                lazySources.emplace(element, LazySource{sampled, firstLayer});
+            }
+        }
+        if (lazyTable) {
+            std::uint64_t borrowed = 0, fallback = 0;
+            for (const auto& entry : lazyDeferred) {
+                const auto donor = lazyDonors.find(entry.donorClass);
+                if (donor != lazyDonors.end() && table.elementTextures[donor->second] != std::numeric_limits<std::size_t>::max()) {
+                    const auto& source = lazySources.at(donor->second);
+                    if (bind(entry.element, source.sampled.words, textures[table.elementTextures[donor->second]], source.sampled.resource, source.sampled.guestBytes, source.firstLayer).empty()) {
+                        ++borrowed;
+                        if (!representativeNeeded.empty() && representativeNeeded[entry.element]) representativeSources.emplace(entry.element, source.sampled.resource);
+                    }
+                    continue;
+                }
+                const auto words = std::span<const std::uint32_t>(entry.words);
+                const auto sampled = prepareSampled(entry.element, words, entry.decoded);
+                std::shared_ptr<Texture> texture;
+                try {
+                    texture = lookupSampled(entry.element, sampled);
+                } catch (const std::runtime_error& error) {
+                    table.map[faults + entry.element] = rejectTableElement(table, words, error.what());
+                    continue;
+                }
+                ++fallback;
+                if (bind(entry.element, sampled.words, std::move(texture), sampled.resource, sampled.guestBytes, entry.decoded.firstLayer).empty()) {
+                    lazyDonors.try_emplace(entry.donorClass, entry.element);
+                    lazySources.emplace(entry.element, LazySource{sampled, entry.decoded.firstLayer});
+                    if (!representativeNeeded.empty() && representativeNeeded[entry.element]) representativeSources.emplace(entry.element, sampled.resource);
+                }
+            }
+            LazyCount(lazyDeferred.size(), borrowed, lazyBuilt, fallback);
         }
         for (const auto element : substitutes) {
             const auto representative = representatives[element];
