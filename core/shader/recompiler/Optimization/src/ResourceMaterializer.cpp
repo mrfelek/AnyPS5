@@ -1874,6 +1874,12 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
             snapshot.buffers.at(i).dwords[1] &= ~0x40000000u;
             snapshot.buffers.at(i).dwords[3] = 0u;
         }
+        if (const auto typed = decodeBufferDescriptor(snapshot.buffers.at(i)).Type(); (typed == 2u || typed == 3u) && std::getenv("APS5_EXP_NULL_TYPED_LOADS") != nullptr) {
+            static std::atomic<unsigned> reported{0};
+            if (reported.fetch_add(1) < 8u) std::fprintf(stderr, "[exp-typed] buffer %u of a shader (first use pc 0x%x) has TYPE %u: bound as a null V# (the console leaves load results unchanged)\n", i, buffer.firstUsePc, typed);
+            auto& words = snapshot.buffers.at(i).dwords;
+            std::fill(words.begin(), words.begin() + 4, 0u);
+        }
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
         if (decoded.Type() != 0u) {
             const auto& words = snapshot.buffers.at(i).dwords;
