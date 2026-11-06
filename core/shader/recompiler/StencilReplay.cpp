@@ -1,3 +1,4 @@
+#include <string>
 #include "StencilReplay.hpp"
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
@@ -41,6 +42,39 @@ struct ReplayMask {
 bool Immediate(const IrValue* value, std::uint32_t expected) {
     value = value->Resolve();
     return value->HasImmediate() && value->Type() == IrType::U32 && value->ImmediateU32() == expected;
+}
+
+bool DrawUniform(const IrValue* value, std::unordered_map<const IrValue*, unsigned>& memo, unsigned depth = 0) {
+    if (depth > 128u) return false;
+    value = value->Resolve();
+    if (value->HasImmediate()) return true;
+    if (const auto found = memo.find(value); found != memo.end()) return found->second == 2u;
+    memo[value] = 1u;
+    bool accepted = value->Opcode() == IrOpcode::GetUserData || value->Opcode() == IrOpcode::GetShaderBase || value->Opcode() == IrOpcode::GetSrtResource;
+    const bool transfer = Detail::IsRuntimeUniformOp(value->Opcode()) || value->Opcode() == IrOpcode::ReadConst || value->Opcode() == IrOpcode::FPOrdLessThan32 || value->Opcode() == IrOpcode::FPOrdGreaterThan32;
+    if (!accepted && transfer && !value->MayHaveSideEffects() && value->ArgumentCount() != 0u) {
+        accepted = std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return DrawUniform(argument, memo, depth + 1u); });
+    }
+    memo[value] = accepted ? 2u : 3u;
+    return accepted;
+}
+
+std::set<const IrValue*> KeepInputs(const IrProgram& program) {
+    std::set<const IrValue*> inputs;
+    std::vector<const IrValue*> pending;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* instruction : block->Instructions()) {
+            const auto opcode = instruction->Opcode();
+            if (opcode == IrOpcode::BranchConditional || opcode == IrOpcode::Discard) for (const auto* argument : instruction->Arguments()) pending.push_back(argument);
+        }
+    }
+    while (!pending.empty()) {
+        const auto* value = pending.back()->Resolve();
+        pending.pop_back();
+        if (value->HasImmediate() || !inputs.insert(value).second) continue;
+        for (const auto* argument : value->Arguments()) pending.push_back(argument);
+    }
+    return inputs;
 }
 
 bool FaultControlFlowAcyclic(const IrProgram& program) {
@@ -408,19 +442,8 @@ private:
         return accepted;
     }
 
-    bool uniform(const IrValue* value, unsigned depth = 0) {
-        if (depth > 128u) return false;
-        value = value->Resolve();
-        if (value->HasImmediate()) return true;
-        if (const auto found = uniformValues.find(value); found != uniformValues.end()) return found->second == 2u;
-        uniformValues[value] = 1u;
-        bool accepted = value->Opcode() == IrOpcode::GetUserData || value->Opcode() == IrOpcode::GetShaderBase || value->Opcode() == IrOpcode::GetSrtResource;
-        const bool transfer = Detail::IsRuntimeUniformOp(value->Opcode()) || value->Opcode() == IrOpcode::ReadConst || value->Opcode() == IrOpcode::FPOrdLessThan32 || value->Opcode() == IrOpcode::FPOrdGreaterThan32;
-        if (!accepted && transfer && !value->MayHaveSideEffects() && value->ArgumentCount() != 0u) {
-            accepted = std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return uniform(argument, depth + 1u); });
-        }
-        uniformValues[value] = accepted ? 2u : 3u;
-        return accepted;
+    bool uniform(const IrValue* value) {
+        return DrawUniform(value, uniformValues);
     }
 
     bool paths() {
@@ -943,13 +966,16 @@ bool LayerReplaySafe(const IrProgram& program) {
     return true;
 }
 
+thread_local std::string StencilReplayUnsafeWhy;
 bool StencilReplaySafe(const IrProgram& program) {
-    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
-    if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
-    for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
+    std::unordered_map<const IrValue*, unsigned> uniformValues;
+    std::optional<std::set<const IrValue*>> keepInputs;
+    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) { StencilReplayUnsafeWhy = "L1"; return false; }
+    if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) { StencilReplayUnsafeWhy = "L2"; return false; }
+    for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) { StencilReplayUnsafeWhy = "L3"; return false; }
     bool masks = false;
     for (const auto& info : program.Metadata().blockInfo) {
-        if (info.terminator.loopHeader) return false;
+        if (info.terminator.loopHeader) { StencilReplayUnsafeWhy = "L6"; return false; }
         if (info.terminator.kind != TerminatorKind::ConditionalBranch) continue;
         const auto kind = info.terminator.condition;
         masks = masks || kind == BranchCondition::ExecZero || kind == BranchCondition::ExecNonZero || kind == BranchCondition::VccZero || kind == BranchCondition::VccNonZero;
@@ -957,9 +983,10 @@ bool StencilReplaySafe(const IrProgram& program) {
     for (const auto& block : program.Blocks()) {
         for (const auto* instruction : block->Instructions()) {
             const auto opcode = instruction->Opcode();
-            if (opcode == IrOpcode::Loop || opcode == IrOpcode::LoopMerge || opcode == IrOpcode::ImageBvhIntersectRay || BufferAccessOf(opcode) == BufferAccess::Atomic || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
-            if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
-            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::SwizzleU32) return false;
+            if (opcode == IrOpcode::Loop || opcode == IrOpcode::LoopMerge || opcode == IrOpcode::ImageBvhIntersectRay || BufferAccessOf(opcode) == BufferAccess::Atomic || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) { StencilReplayUnsafeWhy = std::string("L14 opcode ") + std::string(IrOpcodeName(opcode)); return false; }
+            if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) { StencilReplayUnsafeWhy = std::string("L15 opcode ") + std::string(IrOpcodeName(opcode)); return false; }
+            if (opcode == IrOpcode::ReadFirstLane && !DrawUniform(instruction->Argument(0), uniformValues) && [&] { if (!keepInputs) keepInputs = KeepInputs(program); return keepInputs->contains(instruction); }()) { std::function<std::string(const IrValue*, unsigned)> tree = [&](const IrValue* v, unsigned d) -> std::string { v = v->Resolve(); if (v->HasImmediate()) return "imm"; std::string t(IrOpcodeName(v->Opcode())); t += DrawUniform(v, uniformValues) ? "[u]" : "[v]"; if (d >= 4u || v->ArgumentCount() == 0u) return t; t += "("; for (std::size_t i = 0; i < v->ArgumentCount(); ++i) { if (i) t += ","; t += tree(v->Argument(i), d + 1u); } return t + ")"; }; StencilReplayUnsafeWhy = "ReadFirstLane of " + tree(instruction->Argument(0), 0u); { std::string roots; for (const auto& rb : program.Blocks()) for (const auto* ri : rb->Instructions()) { const auto ro = ri->Opcode(); std::string name; if (ro == IrOpcode::BranchConditional) name = "branch"; else if (ro == IrOpcode::Discard) name = "discard"; else if (ro == IrOpcode::SetAttribute) { const auto& info = program.Metadata().exportInfo.at(ri->Flags<ExportFlags>().index); if (info.kind == ExportTargetKind::MrtZ && (info.en & 2u) != 0u) name = "stencil-export"; } if (name.empty()) continue; std::set<const IrValue*> seen; std::vector<const IrValue*> work(ri->Arguments().begin(), ri->Arguments().end()); bool hit = false; while (!work.empty() && !hit) { const auto* v = work.back()->Resolve(); work.pop_back(); if (v == instruction) hit = true; if (v->HasImmediate() || !seen.insert(v).second) continue; for (const auto* w : v->Arguments()) work.push_back(w); } if (hit) roots += " " + name; } StencilReplayUnsafeWhy += " reaches:" + roots; } return false; }
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::SwizzleU32) { StencilReplayUnsafeWhy = std::string("L16 opcode ") + std::string(IrOpcodeName(opcode)); return false; }
             masks = masks || opcode == IrOpcode::Ballot || opcode == IrOpcode::LaneId || opcode == IrOpcode::WqmU64;
             if (!instruction->MayHaveSideEffects()) continue;
             switch (opcode) {
@@ -991,14 +1018,15 @@ bool StencilReplaySafe(const IrProgram& program) {
                 case IrOpcode::InstPrefetch:
                     break;
                 case IrOpcode::Sendmsg:
-                    if (program.Resources().stage != IrShaderStage::Vertex || instruction->ArgumentCount() != 0u) return false;
+                    if (program.Resources().stage != IrShaderStage::Vertex || instruction->ArgumentCount() != 0u) { StencilReplayUnsafeWhy = "L48"; return false; }
                     break;
                 default:
-                    return false;
+                    { StencilReplayUnsafeWhy = std::string("L51 opcode ") + std::string(IrOpcodeName(opcode)); return false; }
             }
         }
     }
-    return !masks || MaskReplaySafety(program).Check();
+    if (masks && !MaskReplaySafety(program).Check()) { StencilReplayUnsafeWhy = "mask replay"; return false; }
+    return true;
 }
 
 }

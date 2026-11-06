@@ -1,3 +1,4 @@
+#include <atomic>
 #ifndef CORE_SHADER_RECOMPILER_IMAGETABLEABI_HPP
 #define CORE_SHADER_RECOMPILER_IMAGETABLEABI_HPP
 
@@ -6,6 +7,11 @@
 #include <string_view>
 
 namespace ShaderRecompiler::ImageTableAbi {
+
+inline std::atomic<std::uint64_t> DiagUsageAddress{0};
+inline std::atomic<std::uint32_t> DiagUsageWords{0};
+inline std::atomic<std::uint64_t> DiagUsageEmitted{0};
+inline std::atomic<std::uint64_t> DiagTableAccesses{0};
 
 inline constexpr std::uint32_t Version = 3;
 

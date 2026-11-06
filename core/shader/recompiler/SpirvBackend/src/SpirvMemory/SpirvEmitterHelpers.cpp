@@ -1,3 +1,6 @@
+#include "ImageTableAbi.hpp"
+#include <cstdio>
+#include <cstdlib>
 #include "Optimization/ResourceMaterializer.hpp"
 #include "BdaAbi.hpp"
 #include "PipelineSpecialization.hpp"
@@ -168,7 +171,8 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh;
+    const bool diagUsage = ImageTableAbi::DiagUsageAddress.load() != 0 && std::any_of(program.Info().images.begin(), program.Info().images.end(), [](const auto& image) { return image.table != NoTable; });
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || diagUsage;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -430,11 +434,16 @@ void DefineOutputs(SpirvEmitterState& state) {
             binding.variableId = BuiltIn(state.sampleMaskVariable, SampleMaskArrayType(state), "gl_SampleMask", spv::BuiltInSampleMask);
             break;
         case StageOutputKind::StencilRef:
-            if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
+            if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end() && std::getenv("APS5_DIAG_IGNORE_STENCIL_EXPORT") != nullptr && (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program))) {
+                std::fprintf(stderr, "[diag-stencil] ignoring a stencil reference export the replay cannot take: %s\n", StencilReplayUnsafeWhy.c_str());
+                state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
+                if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);
+                binding.variableId = state.stencilRefVariable;
+            } else if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
                 const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
                 if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
                 if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
-                if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
+                if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error(std::string("stencil reference export emulation requires a replay-safe pixel shader with late tests [diag earlyZ=") + std::to_string(PixelInfo(state).psEarlyZ) + " ordered=" + std::to_string(PixelInfo(state).psOrderedPixelShader) + " unsafe=" + StencilReplayUnsafeWhy + "]");
                 state.stencilReplay = true;
                 state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);

@@ -2076,6 +2076,17 @@ double ShaderResources::phase(BuildPhase which) {
     const auto now = std::chrono::steady_clock::now();
     const auto ms = std::chrono::duration<double, std::milli>(now - phaseStart).count();
     addBuildPhase(which, ms);
+    if (textures.size() > 4000u) {
+        std::unordered_set<const Texture*> distinct;
+        std::uint64_t bytes = 0, views = 0, viewDistinct = 0;
+        for (const auto& texture : textures) {
+            if (texture == nullptr) continue;
+            if (texture->ViewsStorageImage()) ++views;
+            if (!distinct.insert(texture.get()).second) continue;
+            if (texture->ViewsStorageImage()) ++viewDistinct; else bytes += texture->AllocationBytes();
+        }
+        std::fprintf(stderr, "[diag-bigtable] phase %s %.0f ms: %zu bound textures, %zu distinct objects (%llu views of storage images, %llu distinct), %.0f MiB in distinct non-view textures\n", BuildPhaseNames[static_cast<std::size_t>(which)], ms, textures.size(), distinct.size(), static_cast<unsigned long long>(views), static_cast<unsigned long long>(viewDistinct), bytes / 1048576.0);
+    }
     if (ms > 50) AgcDriver::ProfilePrint_nid_no_patch("[resources] %s took %.0f ms (%zu textures, %zu storage images, %zu buffers, bda %d)\n", BuildPhaseNames[static_cast<std::size_t>(which)], ms, textures.size(), storageTextures.size(), allocations.size(), usesBda ? 1 : 0);
     phaseStart = now;
     return ms;
@@ -5688,9 +5699,73 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
 
 }
 
+struct DiagTableUsage {
+    std::mutex mutex;
+    std::unique_ptr<Buffer> buffer;
+    std::vector<std::uint32_t> bound;
+    std::int64_t last = 0;
+    std::uint64_t dispatches = 0, maxBound = 0;
+};
+
+DiagTableUsage& DiagUsage() {
+    static DiagTableUsage usage;
+    return usage;
+}
+
+void DiagUsageInit(const Context& context) {
+    static const bool enabled = std::getenv("APS5_DIAG_TABLE_USAGE") != nullptr;
+    if (!enabled || context.imageTableCapacity == 0) return;
+    auto& usage = DiagUsage();
+    std::lock_guard lock(usage.mutex);
+    if (usage.buffer != nullptr) return;
+    const auto words = context.imageTableCapacity / 32u + 1u;
+    usage.buffer = std::make_unique<Buffer>(context, (words + 2u) * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    std::memset(usage.buffer->Bytes().data(), 0, usage.buffer->Bytes().size());
+    usage.bound.assign(words, 0u);
+    ShaderRecompiler::ImageTableAbi::DiagUsageWords.store(words);
+    ShaderRecompiler::ImageTableAbi::DiagUsageAddress.store(usage.buffer->DeviceAddress());
+    std::fprintf(stderr, "[diag-tableuse] bitmap of %u words at 0x%llx for %u table slots\n", words, static_cast<unsigned long long>(usage.buffer->DeviceAddress()), context.imageTableCapacity);
+}
+
+void DiagUsageNote(std::uint32_t elementBase, const std::vector<std::size_t>& elementTextures) {
+    auto& usage = DiagUsage();
+    if (usage.buffer == nullptr) return;
+    std::lock_guard lock(usage.mutex);
+    std::uint64_t count = 0;
+    for (std::size_t element = 0; element < elementTextures.size(); ++element) {
+        if (elementTextures[element] == std::numeric_limits<std::size_t>::max()) continue;
+        const auto absolute = static_cast<std::uint64_t>(elementBase) + element;
+        if ((absolute >> 5u) >= usage.bound.size()) continue;
+        usage.bound[absolute >> 5u] |= 1u << (absolute & 31u);
+        ++count;
+    }
+    ++usage.dispatches;
+    usage.maxBound = std::max(usage.maxBound, count);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - usage.last < 10) return;
+    usage.last = now;
+    auto* read = reinterpret_cast<std::uint32_t*>(usage.buffer->Bytes().data());
+    std::uint64_t bound = 0, used = 0, both = 0, readOnly = 0;
+    for (std::size_t word = 0; word < usage.bound.size(); ++word) {
+        const auto r = __atomic_exchange_n(&read[word], 0u, __ATOMIC_RELAXED);
+        bound += static_cast<std::uint64_t>(std::popcount(usage.bound[word]));
+        used += static_cast<std::uint64_t>(std::popcount(r));
+        both += static_cast<std::uint64_t>(std::popcount(r & usage.bound[word]));
+        readOnly += static_cast<std::uint64_t>(std::popcount(r & ~usage.bound[word]));
+        usage.bound[word] = 0;
+    }
+    const auto executed = __atomic_exchange_n(&read[usage.bound.size() + 1u], 0u, __ATOMIC_RELAXED);
+    std::fprintf(stderr, "[diag-tableuse] executed counter: %u valid reads (x65536) + %u invalid, dummy word 0x%x\n", executed >> 16u, executed & 0xffffu, read[usage.bound.size()]);
+    std::fprintf(stderr, "[diag-tableuse] shader table reads emitted so far: %llu, instrumented %llu\n", static_cast<unsigned long long>(ShaderRecompiler::ImageTableAbi::DiagTableAccesses.load()), static_cast<unsigned long long>(ShaderRecompiler::ImageTableAbi::DiagUsageEmitted.load()));
+    std::fprintf(stderr, "[diag-tableuse] 10 s: %llu table resolves, largest %llu bound slots; %llu distinct slots bound, %llu read by shaders (%llu of them bound this window, %llu not)\n", static_cast<unsigned long long>(usage.dispatches), static_cast<unsigned long long>(usage.maxBound), static_cast<unsigned long long>(bound), static_cast<unsigned long long>(used), static_cast<unsigned long long>(both), static_cast<unsigned long long>(readOnly));
+    usage.dispatches = 0;
+    usage.maxBound = 0;
+}
+
 void ShaderResources::resolveImageTables() {
     const auto none = [](const std::array<std::size_t, 2>& set) { return set[0] == std::numeric_limits<std::size_t>::max() && set[1] == std::numeric_limits<std::size_t>::max(); };
     if (none(tableBindings) && none(storageTableBindings)) return;
+    DiagUsageInit(context);
     auto& counters = TextureCounts();
     for (std::size_t set = 0; set < tableBindings.size(); ++set) {
         if (storageTableBindings[set] != std::numeric_limits<std::size_t>::max()) bindings[storageTableBindings[set]].imageAllocations.assign(std::min(tableElements[set], StorageTableCapacity(context)), std::numeric_limits<std::size_t>::max());
@@ -5773,6 +5848,7 @@ void ShaderResources::resolveImageTables() {
                 reused->replayable = static_cast<std::uint64_t>(table.elementBase) + binding.count <= context.imageTableCapacity;
             }
             (replay ? counters.tablesReplayed : counters.tablesReused).fetch_add(1, std::memory_order_relaxed);
+            DiagUsageNote(table.elementBase, table.elementTextures);
             continue;
         }
         ReusedTable fresh;
@@ -5903,6 +5979,7 @@ void ShaderResources::resolveImageTables() {
             else counters.variantRejected.fetch_add(1, std::memory_order_relaxed);
         }
         counters.tablesResolved.fetch_add(1, std::memory_order_relaxed);
+        DiagUsageNote(table.elementBase, table.elementTextures);
         if (reusable && CurrentTableState() == state) {
             const auto serial = StorageTexture::PendingSerial();
             if (!StorageTexture::AnyPendingOverlaps(fresh.ranges) && StorageTexture::PendingSerial() == serial) {
