@@ -7161,7 +7161,11 @@ void GuestBufferMemory::WriteBack() {
                 const auto to = std::min(end, (from / block + 1) * block);
                 const auto length = static_cast<std::size_t>(to - from);
                 if (GuestMemory::UnchangedSince(from, length, region.diffGeneration)) {
-                    storeChanged(from, region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length), std::span<const std::byte>(reinterpret_cast<const std::byte*>(from), length), GuestMemory::WriteChangedKeepingGuest);
+                    thread_local std::vector<std::byte> original;
+                    original.resize(length);
+                    const auto current = region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length);
+                    GuestMemory::Read(from, original);
+                    if (std::memcmp(current.data(), original.data(), length) != 0) storeChanged(from, current, original, GuestMemory::WriteChangedKeepingGuest);
                     stored.fetch_add(1, std::memory_order_relaxed);
                 } else {
                     conflicts.fetch_add(1, std::memory_order_relaxed);
