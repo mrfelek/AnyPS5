@@ -3146,7 +3146,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             stencilReferences = shader.program->stencilReferences;
         }
     }
-    if (static const bool diagStencilDraws = std::getenv("APS5_DIAG_STENCIL_DRAWS") != nullptr; diagStencilDraws && (state.stencilTest || !stencilReferences.empty())) {
+    static const std::uint64_t diagStencilHash = [] { const char* text = std::getenv("APS5_DIAG_STENCIL_HASH"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
+    const bool diagHashed = diagStencilHash != 0u && std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment && shader.program != nullptr && shader.program->spirv.ContentHash().low == diagStencilHash; });
+    if (static const bool diagStencilDraws = std::getenv("APS5_DIAG_STENCIL_DRAWS") != nullptr; diagStencilDraws && (state.stencilTest || !stencilReferences.empty() || diagHashed)) {
         static std::atomic<std::uint64_t> counter{0};
         std::uint64_t fragment = 0;
         for (const auto& shader : shaders) {
@@ -3154,9 +3156,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
         const auto& f = state.stencilFront;
         const bool unsafe = !stencilReferences.empty() && !std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe; });
-        std::fprintf(stderr, "[diag-stencil-draw] #%llu frag %016llx export %d%s test %d cmp %d ref 0x%x read 0x%x write 0x%x pass %d fail %d zfail %d indices %u inst %u\n",
-            static_cast<unsigned long long>(counter.fetch_add(1)), static_cast<unsigned long long>(fragment), stencilReferences.empty() ? 0 : 1, unsafe ? " (unsafe: static ref)" : "",
-            state.stencilTest ? 1 : 0, static_cast<int>(f.compareOp), f.reference, f.compareMask, f.writeMask, static_cast<int>(f.passOp), static_cast<int>(f.failOp), static_cast<int>(f.depthFailOp), draw.indexCount, draw.instanceCount);
+        std::fprintf(stderr, "[diag-stencil-draw] #%llu frag %016llx%s export %d%s test %d cmp %d ref 0x%x read 0x%x write 0x%x pass %d fail %d zfail %d depth test %d write %d cmp %d indices %u inst %u\n",
+            static_cast<unsigned long long>(counter.fetch_add(1)), static_cast<unsigned long long>(fragment), diagHashed ? " (hashed)" : "", stencilReferences.empty() ? 0 : 1, unsafe ? " (unsafe: static ref)" : "",
+            state.stencilTest ? 1 : 0, static_cast<int>(f.compareOp), f.reference, f.compareMask, f.writeMask, static_cast<int>(f.passOp), static_cast<int>(f.failOp), static_cast<int>(f.depthFailOp), state.depthTest ? 1 : 0, state.depthWrite ? 1 : 0, static_cast<int>(state.depthCompare), draw.indexCount, draw.instanceCount);
     }
     if (!stencilReferences.empty() && std::getenv("APS5_DIAG_IGNORE_STENCIL_EXPORT") != nullptr && !std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe; })) {
         static std::once_flag noted;
