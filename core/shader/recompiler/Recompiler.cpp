@@ -734,7 +734,14 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.bdaWrites = program.Info().bdaWrites;
     if (stencilReplay) {
         result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
-        if (!result.stencilReplaySafe && std::getenv("APS5_DIAG_IGNORE_STENCIL_EXPORT") != nullptr) result.stencilReferences.clear();
+        if (!result.stencilReplaySafe && std::getenv("APS5_DIAG_IGNORE_STENCIL_EXPORT") != nullptr) {
+            if (std::getenv("APS5_DIAG_STENCIL_DRAWS") != nullptr) {
+                std::string values;
+                for (const auto value : result.stencilReferences) values += " " + std::to_string(value);
+                std::fprintf(stderr, "[diag-stencil-ignored] fragment 0x%llx spirv %016llx export values:%s\n", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<unsigned long long>(result.spirv.ContentHash().low), values.c_str());
+            }
+            result.stencilReferences.clear();
+        }
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
 
