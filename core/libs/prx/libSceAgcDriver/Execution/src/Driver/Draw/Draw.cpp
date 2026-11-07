@@ -564,6 +564,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto line = FormatDrawProgramTrace(submission.serial, submission.queue, identities);
         std::fprintf(stderr, "%s\n", line.c_str());
     }
+    static const std::uint64_t diagRegsFor = [] { const char* text = std::getenv("APS5_DIAG_DRAW_REGS_FOR"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
+    if (diagRegsFor != 0u && std::ranges::any_of(programs, [](const auto& program) { return program.snapshot->codeAddress == diagRegsFor; })) {
+        std::fprintf(stderr, "[diag-draw-regs] submission=%llu DB_DEPTH_CONTROL=%08x DB_STENCIL_CONTROL=%08x DB_STENCILREFMASK=%08x DB_STENCILREFMASK_BF=%08x DB_SHADER_CONTROL=%08x DB_RENDER_CONTROL=%08x DB_Z_INFO=%08x DB_STENCIL_INFO=%08x CB_COLOR_CONTROL=%08x CB_TARGET_MASK=%08x\n",
+            static_cast<unsigned long long>(submission.serial), readRegister(queue.context, 0x200), readRegister(queue.context, 0x10b), readRegister(queue.context, 0x10c), readRegister(queue.context, 0x10d),
+            readRegister(queue.context, 0x203), readRegister(queue.context, 0x000), readRegister(queue.context, 0x010), readRegister(queue.context, 0x011), readRegister(queue.context, 0x202), readRegister(queue.context, 0x08e));
+    }
     phaseTiming.Phase(DrawRowDecode);
 
     const auto locate = [&](std::uint32_t location) -> std::optional<std::pair<std::size_t, std::size_t>> {
