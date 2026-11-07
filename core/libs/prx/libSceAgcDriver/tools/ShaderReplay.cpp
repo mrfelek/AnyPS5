@@ -163,6 +163,12 @@ bool Replay(const char* path) {
         try {
             const auto handle = ShaderRecompiler::PrepareShader(request.request);
             std::printf("  prepared: %zu SPIR-V words\n", ShaderRecompiler::GetPreparedArtifact(*handle).spirv.size());
+            if (g_spirv) {
+                const auto& words = ShaderRecompiler::GetPreparedArtifact(*handle).spirv;
+                std::string name(path);
+                name = name.substr(name.find_last_of("/\\") + 1) + ".prepared.spv";
+                std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(words.data()), static_cast<std::streamsize>(words.size() * sizeof(words[0])));
+            }
             if (g_materialize) {
                 phase = "prepared invocation";
                 const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request.request, handle);

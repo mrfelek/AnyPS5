@@ -1009,7 +1009,21 @@ private:
             if (otherUsers && !rereadable) { DiagColumnFail(__LINE__); return false; }
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    if (user->Opcode() == IrOpcode::Phi && ExpOn("APS5_EXP_DIRECT_CHASE")) return true;  // the word also feeds a chased pointer (linked records)
+                    if (user->Opcode() == IrOpcode::Phi && rereadable && ExpOn("APS5_EXP_DIRECT_CHASE")) {
+                        std::vector<const IrValue*> pending{user};
+                        std::unordered_set<const IrValue*> seen;
+                        bool pointerOnly = true;
+                        while (!pending.empty() && pointerOnly) {
+                            const IrValue* value = pending.back();
+                            pending.pop_back();
+                            if (!seen.insert(value).second) continue;
+                            for (const IrValue* next : value->Uses()) {
+                                if (next->IsPhi()) pending.push_back(next);
+                                else if (next->Opcode() != IrOpcode::GetAddressResource) { pointerOnly = false; if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] linked word user %s\n", IrOpcodeName(next->Opcode()).data()); break; }
+                            }
+                        }
+                        if (pointerOnly) return true;
+                    }
                     if (user->Opcode() != IrOpcode::GetBufferResource) { DiagColumnFail(__LINE__); return false; }
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
                     return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
