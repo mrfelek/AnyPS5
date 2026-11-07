@@ -1,3 +1,4 @@
+#include <unordered_set>
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "Recompiler.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
@@ -2279,13 +2280,27 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     return capture;
 }
 
+static void DiagSpirvHash(const RecompileRequest& request, const RecompileResult& result) {
+    static const bool enabled = std::getenv("APS5_DIAG_SPIRV_HASH") != nullptr;
+    if (!enabled) return;
+    static std::mutex mutex;
+    static std::unordered_set<std::uint64_t> seen;
+    const auto hash = result.spirv.ContentHash().low;
+    std::lock_guard lock(mutex);
+    if (seen.insert(hash).second) std::fprintf(stderr, "[diag-spirv-hash] %016llx shader 0x%llx stage %u\n", static_cast<unsigned long long>(hash), static_cast<unsigned long long>(request.shader.codeAddress), static_cast<unsigned>(request.shader.stage));
+}
+
 RecompileResult Recompile(const RecompileRequest& request) {
-    return recompileReporting(request, [&] { return RecompileImpl(request); });
+    auto result = recompileReporting(request, [&] { return RecompileImpl(request); });
+    DiagSpirvHash(request, result);
+    return result;
 }
 
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
-    return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+    auto result = recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+    if (result != nullptr) DiagSpirvHash(request, *result);
+    return result;
 }
 
 void SetResultMemoBudget(std::uint64_t bytes) {
