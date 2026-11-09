@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <atomic>
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -23,6 +25,8 @@ void Submit(const Packet* packet, std::uint32_t queue) try {
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
     const auto flips = driver.FlipSubmissions();
     recorder->Submit(*packet, queue, [&] { driver.Submit(packet, queue); });
+    static std::atomic<std::uint64_t> diagSubmits{0};
+    if (std::getenv("APS5_DIAG_CAPTURE_BOUNDARIES") != nullptr) { const auto n = ++diagSubmits; if (n <= 3u || n % 2000u == 0u) std::fprintf(stderr, "[diag-capture] submit %llu queue 0x%x flips before %llu after %llu\n", static_cast<unsigned long long>(n), queue, static_cast<unsigned long long>(flips), static_cast<unsigned long long>(driver.FlipSubmissions())); }
     if (driver.FlipSubmissions() != flips) recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -69,6 +73,8 @@ void PresentClear(const PresentationWindow& window, bool opaque, const DisplayBu
 }
 
 void PresentBuffer(const PresentationWindow& window, const DisplayBuffer& buffer, const DisplayBuffer* plane, void (*gpuReady)(void*), void* context) {
+    static std::atomic<std::uint64_t> diagPresents{0};
+    if (std::getenv("APS5_DIAG_CAPTURE_BOUNDARIES") != nullptr) { const auto n = ++diagPresents; if (n <= 3u || n % 100u == 0u || n > 650u) std::fprintf(stderr, "[diag-capture] present buffer %llu flip submissions %llu\n", static_cast<unsigned long long>(n), static_cast<unsigned long long>(DriverDetail::Driver::Get().FlipSubmissions())); }
     if (auto* const recorder = FrameRecorder::Active()) recorder->PresentBuffer(buffer);
     DriverDetail::Driver::Get().Present(window, &buffer, plane, true, gpuReady, context);
 }
@@ -177,6 +183,7 @@ extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info)
         AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
         return;
     }
+    if (std::getenv("APS5_DIAG_CAPTURE_BOUNDARIES") != nullptr) std::fprintf(stderr, "[diag-capture] cpu flip\n");
     recorder->Flip(info, [&] { AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info); });
     recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {

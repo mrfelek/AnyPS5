@@ -304,6 +304,7 @@ void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<co
 void FrameRecorder::FrameBoundary() {
     std::lock_guard lock(mutex);
     ++boundaries;
+    if (std::getenv("APS5_DIAG_CAPTURE_BOUNDARIES") != nullptr && (boundaries <= 5u || boundaries % 100u == 0u || boundaries > 650u)) std::fprintf(stderr, "[diag-capture] frame boundary %llu state %d\n", static_cast<unsigned long long>(boundaries), static_cast<int>(state));
     if (state == State::Recording) {
         if (++recordedFrames >= frames) finish();
         return;
@@ -637,7 +638,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
         const bool host = first < base || end > base + size;
@@ -672,7 +673,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
         const bool host = first < base || end > base + size;

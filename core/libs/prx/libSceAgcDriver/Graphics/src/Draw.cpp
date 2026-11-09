@@ -1595,7 +1595,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             const auto primitives = (draw.indexCount - inputSize) / step + 1u;
             const auto groups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
             const auto grid = MeshGridFor(context, groups, draw.instanceCount);
-            Require(grid.has_value(), "mesh draw exceeds workgroup count limits");
+            Require(grid.has_value(), "mesh draw exceeds workgroup count limits (indices " + std::to_string(draw.indexCount) + ", instances " + std::to_string(draw.instanceCount) + ", groups " + std::to_string(groups) + ", input " + std::to_string(mesh.inputPrimitive) + ", per group " + std::to_string(mesh.primitivesPerGroup) + ", indexed " + std::to_string(draw.indexed ? 1 : 0) + ")");
             APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u as %u x %u", primitives, groups, grid->groups, grid->layers);
             inputs.meshGroups = grid->groups;
             inputs.meshLayers = grid->layers;
@@ -2814,6 +2814,14 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
+        static std::mutex diagKeysMutex;
+        static std::map<std::uint64_t, int> diagKeys;
+        std::lock_guard diagKeysLock(diagKeysMutex);
+        if (++diagKeys[key] <= 2) {
+            std::string stagesText;
+            for (const auto& shader : shaders) stagesText += " " + std::to_string(static_cast<int>(shader.stage));
+            std::fprintf(stderr, "[diag-drawkey] 0x%llx stages%s stencil replays %zu indices %u instances %u indexed %d mesh %d\n", static_cast<unsigned long long>(key), stagesText.c_str(), record.stencilReplay.size(), draw.indexCount, draw.instanceCount, draw.indexed ? 1 : 0, UsesMeshWindow(shaders) ? 1 : 0);
+        }
     }
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {

@@ -675,7 +675,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         depthStencil.depthWriteEnable = state.depthWrite;
         depthStencil.depthCompareOp = state.depthCompare;
         depthStencil.depthBoundsTestEnable = depthBounds;
-        depthStencil.stencilTestEnable = state.stencilTest;
+        static const bool diagNoStencilTest = std::getenv("APS5_DIAG_NO_STENCIL_TEST") != nullptr;
+        depthStencil.stencilTestEnable = state.stencilTest && !diagNoStencilTest;
         depthStencil.front = state.stencilFront;
         depthStencil.back = state.stencilBack;
         const VkSampleMask sampleMask = HostSampleMask(state);

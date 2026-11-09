@@ -1255,6 +1255,17 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             return DrawVerdict::Rejected;
         }
     }
+    if (static const bool nameVariants = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr; nameVariants && stages.size() != programs.size()) {
+        static std::mutex unequalMutex;
+        static std::set<std::uint64_t> unequalNamed;
+        std::lock_guard unequalLock(unequalMutex);
+        std::string codes;
+        for (const auto& program : programs) codes += " 0x" + [&] { char text[24]; std::snprintf(text, sizeof(text), "%llx", static_cast<unsigned long long>(program.binary.codeAddress)); return std::string(text); }();
+        for (std::size_t i = 0; i < stages.size(); ++i) {
+            if (stages[i].program == nullptr || !unequalNamed.insert(stages[i].program->variantId).second) continue;
+            std::fprintf(stderr, "[drawvariant] 0x%llx stage %d codes%s (%zu stages, %zu programs)\n", static_cast<unsigned long long>(stages[i].program->variantId), static_cast<int>(stages[i].stage), codes.c_str(), stages.size(), programs.size());
+        }
+    }
     if (static const bool nameVariants = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr; nameVariants && stages.size() == programs.size()) {
         static std::mutex namedMutex;
         static std::set<std::uint64_t> named;

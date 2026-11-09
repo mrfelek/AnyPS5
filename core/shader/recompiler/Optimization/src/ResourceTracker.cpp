@@ -867,13 +867,24 @@ private:
         return domain;
     }
 
-    bool DescriptorWordReads(const IrValue& buffer, bool rereadable, const IrValue& vsharp) const {
+    static bool DescriptorWordReads(const IrValue& buffer, bool rereadable) {
         return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
-            if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
-            if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
-            if (rereadable && ExpOn("APS5_EXP_DESCRIPTOR_DATA")) return true;
-            return rereadable && ChildKeyWord(*read, vsharp);
+            return read->Opcode() == IrOpcode::ReadConstBuffer && (rereadable || (!read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)));
         });
+    }
+
+    static bool PointerWordUser(const IrValue& user) {
+        std::vector<const IrValue*> pending{&user};
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back();
+            pending.pop_back();
+            if (!seen.insert(value).second) continue;
+            if (value->Opcode() == IrOpcode::GetAddressResource && value->ArgumentCount() == 2u) continue;
+            if (!value->IsPhi() || value->Uses().empty()) return false;
+            for (const IrValue* use : value->Uses()) pending.push_back(use);
+        }
+        return true;
     }
 
     bool RereadableVsharp(const IrValue& handle, const TableColumnPlan& parent) const {
@@ -1009,24 +1020,9 @@ private:
             if (otherUsers && !rereadable) { DiagColumnFail(__LINE__); return false; }
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    if (user->Opcode() == IrOpcode::Phi && rereadable && ExpOn("APS5_EXP_DIRECT_CHASE")) {
-                        std::vector<const IrValue*> pending{user};
-                        std::unordered_set<const IrValue*> seen;
-                        bool pointerOnly = true;
-                        while (!pending.empty() && pointerOnly) {
-                            const IrValue* value = pending.back();
-                            pending.pop_back();
-                            if (!seen.insert(value).second) continue;
-                            for (const IrValue* next : value->Uses()) {
-                                if (next->IsPhi()) pending.push_back(next);
-                                else if (next->Opcode() != IrOpcode::GetAddressResource) { pointerOnly = false; if (std::getenv("APS5_DIAG_CHASE")) std::fprintf(stderr, "[diag-chase] linked word user %s\n", IrOpcodeName(next->Opcode()).data()); break; }
-                            }
-                        }
-                        if (pointerOnly) return true;
-                    }
-                    if (user->Opcode() != IrOpcode::GetBufferResource) { DiagColumnFail(__LINE__); return false; }
+                    if (user->Opcode() != IrOpcode::GetBufferResource) return rereadable && PointerWordUser(*user);
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
-                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
+                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable);
                 });
             })) { DiagColumnFail(__LINE__); return false; }
             heapIndex = parent.source;

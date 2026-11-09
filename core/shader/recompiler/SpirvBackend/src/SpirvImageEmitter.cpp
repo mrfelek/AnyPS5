@@ -2302,9 +2302,12 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), pointer, address);
             state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), bit);
-            const auto countPointer = state.module.AllocateId();
-            state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), countPointer, Binary(state, spv::OpIAdd, u64, diagBase, BdaConstant(state, 4ull * (words + 1u))));
-            state.module.AddFunction(spv::OpAtomicIAdd, u32, state.module.AllocateId(), countPointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), Select(state, u32, read, ConstantU32(state, 65536u), ConstantU32(state, 1u)));
+            static const bool diagCounter = std::getenv("APS5_DIAG_TABLE_COUNTER") != nullptr;
+            if (diagCounter) {
+                const auto countPointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), countPointer, Binary(state, spv::OpIAdd, u64, diagBase, BdaConstant(state, 4ull * (words + 1u))));
+                state.module.AddFunction(spv::OpAtomicIAdd, u32, state.module.AllocateId(), countPointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), Select(state, u32, read, ConstantU32(state, 65536u), ConstantU32(state, 1u)));
+            }
         }
     }
     if (tableSampler) {
