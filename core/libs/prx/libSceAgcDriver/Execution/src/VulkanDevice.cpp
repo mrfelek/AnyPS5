@@ -1191,6 +1191,7 @@ struct VulkanDevice::State {
             resourceCache.Clear();
             Graphics::ClearRetainedSpaces(device);
             Graphics::ClearCachedTextures(device);
+            Graphics::DiagUsageRelease(device);
             Graphics::ClearSnapshotCopies(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);

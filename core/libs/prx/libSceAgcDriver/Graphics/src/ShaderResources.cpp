@@ -6064,6 +6064,7 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
 struct DiagTableUsage {
     std::mutex mutex;
     std::unique_ptr<Buffer> buffer;
+    VkDevice device = VK_NULL_HANDLE;
     std::vector<std::uint32_t> bound;
     std::vector<std::uint32_t> readAccum;
     std::vector<std::uint64_t> slotKey;
@@ -6087,6 +6088,7 @@ void DiagUsageInit(const Context& context) {
     if (usage.buffer != nullptr) return;
     const auto words = context.imageTableCapacity / 32u + 1u;
     usage.buffer = std::make_unique<Buffer>(context, (words + 2u) * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    usage.device = context.device;
     std::memset(usage.buffer->Bytes().data(), 0, usage.buffer->Bytes().size());
     usage.bound.assign(words, 0u);
     usage.readAccum.assign(words, 0u);
@@ -6094,6 +6096,19 @@ void DiagUsageInit(const Context& context) {
     ShaderRecompiler::ImageTableAbi::DiagUsageWords.store(words);
     ShaderRecompiler::ImageTableAbi::DiagUsageAddress.store(usage.buffer->DeviceAddress());
     std::fprintf(stderr, "[diag-tableuse] bitmap of %u words at 0x%llx for %u table slots\n", words, static_cast<unsigned long long>(usage.buffer->DeviceAddress()), context.imageTableCapacity);
+}
+
+void DiagUsageRelease(VkDevice device) {
+    auto& usage = DiagUsage();
+    std::lock_guard lock(usage.mutex);
+    if (usage.buffer == nullptr || usage.device != device) return;
+    ShaderRecompiler::ImageTableAbi::DiagUsageAddress.store(0);
+    usage.buffer.reset();
+    usage.device = VK_NULL_HANDLE;
+    usage.bound.clear();
+    usage.readAccum.clear();
+    usage.slotKey.clear();
+    usage.wanted.clear();
 }
 
 bool LazyTablesEnabled() {
