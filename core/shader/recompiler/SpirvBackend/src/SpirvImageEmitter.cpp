@@ -2279,6 +2279,25 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         state.tableAccess.uniform = base.source < sources.size() && sources[base.source].tableColumn.has_value() && sources[base.source].tableColumn->selected;
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, state.tableAccess.element);
         state.tableAccess.dword3 = dword3;
+        ImageTableAbi::DiagTableAccesses.fetch_add(1);
+        if (const auto diag = ImageTableAbi::DiagUsageAddress.load(); diag != 0) {
+            ImageTableAbi::DiagUsageEmitted.fetch_add(1);
+            const auto words = ImageTableAbi::DiagUsageWords.load();
+            const auto read = both(exec, result.valid);
+            const auto absolute = state.tableAccess.element;
+            const auto shifted = Binary(state, spv::OpShiftRightLogical, u32, absolute, ConstantU32(state, 5u));
+            const auto inside = both(read, Binary(state, spv::OpULessThan, boolean, shifted, ConstantU32(state, words)));
+            const auto wordIndex = Select(state, u32, inside, shifted, ConstantU32(state, words));
+            const auto bit = Select(state, u32, inside, Binary(state, spv::OpShiftLeftLogical, u32, ConstantU32(state, 1u), Binary(state, spv::OpBitwiseAnd, u32, absolute, ConstantU32(state, 31u))), ConstantU32(state, 0u));
+            const auto offset = Unary(state, spv::OpUConvert, TypeScalarU64(state), Binary(state, spv::OpShiftLeftLogical, u32, wordIndex, ConstantU32(state, 2u)));
+            const auto address = Binary(state, spv::OpIAdd, TypeScalarU64(state), BdaConstant(state, diag), offset);
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), pointer, address);
+            state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), bit);
+            const auto countPointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, u32), countPointer, BdaConstant(state, diag + 4ull * (words + 1u)));
+            state.module.AddFunction(spv::OpAtomicIAdd, u32, state.module.AllocateId(), countPointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u), Select(state, u32, read, ConstantU32(state, 65536u), ConstantU32(state, 1u)));
+        }
     }
     if (tableSampler) {
         const auto& sampler = state.program.Info().samplers.at(memory.sampler);

@@ -44,6 +44,7 @@ struct WriteIndexOutcomes {
     std::uint64_t builds = 0;
 };
 WriteIndexOutcomes WriteIndexOutcomesCounted();
+void DiagUsageInit(const Context& context);
 std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage = false);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
