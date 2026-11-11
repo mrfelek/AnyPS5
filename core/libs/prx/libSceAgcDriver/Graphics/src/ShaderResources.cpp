@@ -6127,6 +6127,14 @@ void DiagUsageRelease(VkDevice device) {
     usage.wanted.clear();
 }
 
+bool VariantSwapEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("APS5_VARIANT_SWAP");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+
 bool LazyTablesEnabled() {
     static const bool enabled = std::getenv("APS5_LAZY_TABLES") != nullptr;
     return enabled && DiagUsage().buffer != nullptr;
@@ -6328,7 +6336,7 @@ void ShaderResources::resolveImageTables() {
             Require(context.imageViewMinLod || EffectiveMinLod(sampled.resource) == 0.0f, "a sampled image table entry has a minimum LOD clamp, which needs VK_EXT_image_view_min_lod");
             return cachedTexture(context, sampled.words, sampled.resource, sampled.components, sampled.guestBytes, sampled.depthCompare, multisampleViewType);
         };
-        const auto resolveLive = [&](std::uint32_t element, std::span<const std::uint32_t> words) -> std::string {
+        const auto resolveLive = [&](std::uint32_t element, std::span<const std::uint32_t> words, GuestTextureResource* source = nullptr) -> std::string {
             DecodedEntry decoded;
             try {
                 decoded = decodeEntry(element, words);
@@ -6344,6 +6352,7 @@ void ShaderResources::resolveImageTables() {
                 table.map[faults + element] = rejectTableElement(table, words, error.what());
                 return error.what();
             }
+            if (source != nullptr) *source = sampled.resource;
             return bind(element, sampled.words, std::move(texture), sampled.resource, sampled.guestBytes, decoded.firstLayer);
         };
         const auto state = CurrentTableState();
@@ -6358,10 +6367,22 @@ void ShaderResources::resolveImageTables() {
             if (landed && CurrentTableState() != state) reused = nullptr;
         }
         if (reused != nullptr && !reused->lazyKeys.empty() && (!LazyTablesEnabled() || LazyRecheck(table.elementBase, reused->lazyKeys))) reused = nullptr;
-        if (reused != nullptr && !reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity)) reused = nullptr;
-        if (reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
-            table.representatives = reused->representatives;
-            const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
+        std::vector<std::uint32_t> swapChoice;
+        bool swapped = false;
+        if (reused != nullptr && !reused->representatives.empty()) {
+            swapChoice = variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity);
+            if (swapChoice != reused->representatives) {
+                swapped = VariantSwapEnabled();
+                if (!swapped) reused = nullptr;
+            }
+        }
+        if (reused != nullptr && !TableCurrent(*reused)) reused = nullptr;
+        if (reused != nullptr && !CachedTableTextures(*reused, cached)) reused = nullptr;
+        if (reused != nullptr) {
+            table.representatives = swapped ? swapChoice : reused->representatives;
+            const auto swapRole = [&](std::uint32_t element) { return swapped && !swapChoice.empty() && swapChoice[element] != NoRepresentative; };
+            std::unordered_map<std::uint32_t, GuestTextureResource> swapSources;
+            const bool replay = !swapped && TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
             for (std::uint32_t element = 0; element < binding.count; ++element) {
@@ -6370,14 +6391,23 @@ void ShaderResources::resolveImageTables() {
                 if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) {
                     if (!entry.rejected && !entry.live && !entry.deferred && !entry.substitute) ++next;
                     table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
+                } else if (swapRole(element)) {
+                    if (!entry.rejected && !entry.live && !entry.deferred && !entry.substitute) ++next;
                 } else if (entry.rejected) {
                     table.map[faults + element] = rejectTableElement(table, words, entry.message);
-                } else if (entry.deferred || entry.substitute) {
+                } else if (entry.deferred) {
                     continue;
+                } else if (entry.substitute) {
+                    if (!swapped) continue;
+                    GuestTextureResource source{};
+                    if (resolveLive(element, words, &source).empty()) swapSources.emplace(element, source);
                 } else if (entry.live) {
-                    auto message = resolveLive(element, words);
+                    GuestTextureResource source{};
+                    auto message = resolveLive(element, words, swapped ? &source : nullptr);
+                    if (swapped && message.empty()) swapSources.emplace(element, source);
                     if (!replay) reused->bound[element] = std::move(message);
                 } else {
+                    if (swapped) swapSources.emplace(element, entry.resource);
                     if (!replay) {
                         reused->bound[element] = bind(element, words, std::move(*next++), entry.resource, entry.guestBytes, entry.firstLayer);
                     } else if (!reused->bound[element].empty()) {
@@ -6390,24 +6420,31 @@ void ShaderResources::resolveImageTables() {
             }
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto& entry = reused->elements[element];
-                if (!entry.deferred || static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
+                if (!entry.deferred || swapRole(element) || static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
                 const auto index = table.elementTextures[entry.donor];
                 std::string message;
                 if (index != std::numeric_limits<std::size_t>::max()) {
                     message = bind(element, entry.donorWords, textures[index], entry.resource, entry.guestBytes, entry.firstLayer);
+                    if (swapped && message.empty()) swapSources.emplace(element, entry.resource);
                 } else {
                     const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-                    message = resolveLive(element, words);
+                    GuestTextureResource source{};
+                    message = resolveLive(element, words, swapped ? &source : nullptr);
+                    if (swapped && message.empty()) swapSources.emplace(element, source);
                 }
                 if (!replay) reused->bound[element] = std::move(message);
             }
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto& entry = reused->elements[element];
-                if (!entry.substitute || static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
+                if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
+                if (swapped ? !swapRole(element) : !entry.substitute) continue;
+                const auto donor = swapped ? swapChoice[element] : entry.donor;
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-                const auto index = table.elementTextures[entry.donor];
-                const auto repWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(entry.donor) * 8u, 8u);
-                const auto message = index == std::numeric_limits<std::size_t>::max() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, repWords, textures[index], entry.donorResource);
+                const auto index = table.elementTextures[donor];
+                const auto repWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(donor) * 8u, 8u);
+                const auto source = swapped ? swapSources.find(donor) : swapSources.end();
+                const bool missing = index == std::numeric_limits<std::size_t>::max() || (swapped && source == swapSources.end());
+                const auto message = missing ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, repWords, textures[index], swapped ? source->second : entry.donorResource);
                 if (!message.empty()) {
                     table.map[faults + element] = rejectTableElement(table, words, message);
                     counters.variantRejected.fetch_add(1, std::memory_order_relaxed);
@@ -6421,6 +6458,9 @@ void ShaderResources::resolveImageTables() {
                 reused->imageSamplers = binding.imageSamplers;
                 reused->samplers = samplerKey;
                 reused->replayable = static_cast<std::uint64_t>(table.elementBase) + binding.count <= context.imageTableCapacity;
+            }
+            if (swapped) {
+                reused->replayable = false;
             }
             (replay ? counters.tablesReplayed : counters.tablesReused).fetch_add(1, std::memory_order_relaxed);
             DiagUsageNote(table.elementBase, table.elementTextures);
