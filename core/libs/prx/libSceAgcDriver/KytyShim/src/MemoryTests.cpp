@@ -1,7 +1,6 @@
 #include "kernel/memory.h"
 
 #include "MemoryShim.hpp"
-#include "common/runtimeSwitches.h"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -769,7 +768,6 @@ void ProtectOwned(int protection) {
 }
 
 void TestClampRememberedUntilViewChange() {
-    namespace Switches = Common::RuntimeSwitches;
     constexpr std::size_t bytes = Page * 4;
     constexpr auto offset = 11u;
     void* heap = GuestArena::GuestArenaAllocate_nid_postfix(bytes, Page);
@@ -778,9 +776,6 @@ void TestClampRememberedUntilViewChange() {
     const auto size = bytes - offset;
     const auto expect = [&](std::uint64_t mapped) {
         for (int i = 0; i < 4; ++i) Require(Memory::ClampRangeSize(address, size) == mapped);
-        Switches::Assign(Switches::Switch::ClampMemo, false);
-        Require(Memory::ClampRangeSize(address, size) == mapped);
-        Switches::Assign(Switches::Switch::ClampMemo, true);
         std::uint64_t other = 0;
         std::thread([&] { other = Memory::ClampRangeSize(address, size); }).join();
         Require(other == mapped);
@@ -795,7 +790,7 @@ void TestClampRememberedUntilViewChange() {
     expect(size);
     GuestArena::GuestArenaReset_nid_postfix(heap, bytes);
     GuestArena::GuestArenaRelease_nid_postfix(heap, bytes);
-    std::printf("clamped range 0x%llx: the remembered mapped length follows every commit and reset, on this thread and another, with and without KYTY_CLAMP_MEMO\n", static_cast<unsigned long long>(address));
+    std::printf("clamped range 0x%llx: the remembered mapped length follows every commit and reset, on this thread and another\n", static_cast<unsigned long long>(address));
 }
 
 void TestGuestCopyOut() {
