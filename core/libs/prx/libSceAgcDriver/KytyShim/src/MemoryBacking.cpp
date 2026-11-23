@@ -2,6 +2,7 @@
 
 #include "common/assert.h"
 #include "common/hackNotice.h"
+#include "common/runtimeSwitches.h"
 
 #include "MemoryShim.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -921,12 +922,33 @@ bool IsFullyMapped(uint64_t vaddr, uint64_t size) {
 	return Shim::IsBacked(vaddr, size) || MappedPrefix(vaddr, size) == size;
 }
 
+namespace {
+
+struct RememberedPrefix {
+	uint64_t vaddr = 0;
+	uint64_t size = 0;
+	uint64_t prefix = 0;
+	uint64_t probe_epoch = ~uint64_t {0};
+	uint64_t backing_epoch = ~uint64_t {0};
+};
+
+}
+
 uint64_t ClampRangeSize(uint64_t vaddr, uint64_t size) {
 	if (!ValidRange(vaddr, size)) {
 		Shim::Fail("KytyShim memory: attempted to access invalid address 0x%016" PRIx64 " with size 0x%016" PRIx64 "\n", vaddr, size);
 	}
 	if (Shim::IsBacked(vaddr, size)) return size;
+	const bool remember = Common::RuntimeSwitches::On(Common::RuntimeSwitches::Switch::ClampMemo);
+	thread_local std::array<RememberedPrefix, 256> remembered {};
+	const auto probe_epoch = g_probe_epoch.load(std::memory_order_seq_cst);
+	const auto backing_epoch = g_backing_epoch.load(std::memory_order_acquire);
+	auto& slot = remembered[((vaddr >> PageBits) ^ (size * 0x9e3779b97f4a7c15ull >> 56u)) & 255u];
+	if (remember && slot.vaddr == vaddr && slot.size == size && slot.probe_epoch == probe_epoch && slot.backing_epoch == backing_epoch) return slot.prefix;
 	const auto clamped = MappedPrefix(vaddr, size);
+	if (remember && clamped != 0 && g_probe_epoch.load(std::memory_order_seq_cst) == probe_epoch && g_backing_epoch.load(std::memory_order_acquire) == backing_epoch) {
+		slot = {vaddr, size, clamped, probe_epoch, backing_epoch};
+	}
 	if (clamped == size) return size;
 	if (clamped == 0) {
 		Shim::Fail("KytyShim memory: attempted to access invalid address 0x%016" PRIx64 " with size 0x%016" PRIx64 "\n", vaddr, size);
